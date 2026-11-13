@@ -1,0 +1,142 @@
+# Offline quality gate on Linux and Windows: the same command as on a dev machine,
+# `python -m gbf gate --full`, run with the project's virtualenv interpreter.
+#
+# Supply-chain rules for this file:
+# - every action is pinned to a full commit SHA (release tag in the trailing comment);
+# - runner images use OS-versioned labels, never *-latest;
+# - uv is pinned by version and by the sha256 of the archive it downloads;
+# - ffmpeg comes from Ubuntu's apt (version printed in the log) and from a
+#   version-pinned Chocolatey package on Windows.
+# No stored secrets are referenced. The job token is read-only (contents: read) and
+# checkout does not persist it; the uv cache is never saved, so no state from one run
+# is restored into another.
+
+name: gate
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    # On Windows this is Git Bash. The runner writes inline scripts there with CRLF
+    # line endings, and Git Bash ignores the trailing carriage returns.
+    shell: bash
+
+jobs:
+  gate:
+    name: gate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            # sha256 of uv-x86_64-unknown-linux-gnu.tar.gz for uv 0.13.4
+            uv-sha256: 2b428396f12572d4429cf210ca234dd599a33b3af0958a4d5ed569d63e3f344f
+          - os: windows-2025
+            # sha256 of uv-x86_64-pc-windows-msvc.zip for uv 0.13.4
+            uv-sha256: ccec7508a07d9933d7cb1261880633efcf1f30d6e6eddab21823f1dae6f23225
+    env:
+      PYTHONUTF8: "1"
+      UV_PYTHON_PREFERENCE: only-managed
+    steps:
+      # Git for Windows on the runner is installed with core.autocrlf=true, and
+      # actions/checkout does not change line-ending settings. Must run before checkout.
+      - name: Disable CRLF conversion in git (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          git config --system core.autocrlf false
+          git config --system --get core.autocrlf
+
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Text files must be LF in the working tree as well as in the repository
+      # (.gitattributes). Files marked -text (byte-exact fixtures, binaries) are exempt.
+      # Only file names are printed.
+      - name: Check working-tree line endings
+        run: |
+          git config --show-origin --get-all core.autocrlf || echo "core.autocrlf is not set"
+          eol_report="$(git ls-files --eol)"
+          if [ -z "$eol_report" ]; then
+            echo "::error::git ls-files listed no tracked files"
+            exit 1
+          fi
+          crlf_files="$(printf '%s\n' "$eol_report" | grep -E '^i/[^ ]* +w/(crlf|mixed) ' | grep -v ' attr/-text' | cut -f2- || true)"
+          if [ -n "$crlf_files" ]; then
+            echo "::error::tracked text files have CRLF line endings in the working tree"
+            printf '%s\n' "$crlf_files"
+            exit 1
+          fi
+          echo "OK: every tracked text file is LF in the working tree"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.4"
+          checksum: ${{ matrix.uv-sha256 }}
+          enable-cache: false
+
+      - name: Install ffmpeg (Linux, apt)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 install --yes --no-install-recommends ffmpeg
+          dpkg-query --show --showformat='apt package: ${Package} ${Version}\n' ffmpeg
+          apt-cache policy ffmpeg
+
+      # The Chocolatey package embeds the gyan.dev "essentials" build of the same FFmpeg
+      # version. Published package versions cannot be replaced, so a pinned version
+      # installs the same bytes on every run.
+      - name: Install ffmpeg (Windows, Chocolatey)
+        if: runner.os == 'Windows'
+        run: |
+          for attempt in 1 2 3; do
+            if choco install ffmpeg --version=8.1.1 --yes --no-progress; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::choco install ffmpeg 8.1.1 failed 3 times"
+              exit 1
+            fi
+            sleep $((attempt * 20))
+          done
+          # Put the package's own executables ahead of Chocolatey's shims, so that
+          # subprocesses (and their timeouts) talk to ffmpeg.exe itself.
+          bin_dir="$(cygpath -u "${ChocolateyInstall:?ChocolateyInstall is not set}")/lib/ffmpeg/tools/ffmpeg/bin"
+          for exe in ffmpeg.exe ffprobe.exe; do
+            if [ ! -f "$bin_dir/$exe" ]; then
+              echo "::error::$exe is missing from the Chocolatey package directory"
+              exit 1
+            fi
+          done
+          cygpath -w "$bin_dir" >> "$GITHUB_PATH"
+
+      - name: Show ffmpeg and ffprobe versions
+        run: |
+          command -v ffmpeg
+          command -v ffprobe
+          ffmpeg -version
+          ffprobe -version
+
+      - name: Install the locked environment
+        run: uv sync --frozen --python 3.12
+
+      - name: Run the gate (Linux)
+        if: runner.os == 'Linux'
+        run: .venv/bin/python -m gbf gate --full
+
+      - name: Run the gate (Windows)
+        if: runner.os == 'Windows'
+        run: .venv/Scripts/python.exe -m gbf gate --full

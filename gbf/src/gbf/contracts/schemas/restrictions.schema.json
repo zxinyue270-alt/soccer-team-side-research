@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:gbf:schema:restrictions",
+  "title": "Restriction tags",
+  "description": "Every artifact carries the union of its inputs' restrictions (ADR 0002). Publish, upload and deploy tools act on these tags; aggregate statistics carry derived_aggregate instead of the per-item tags.",
+  "$defs": {
+    "tag": {
+      "enum": [
+        "nda",
+        "no_share",
+        "research_nc",
+        "non_commercial",
+        "statsbomb_logo",
+        "no_identity",
+        "sam_license",
+        "hl3",
+        "agpl_network_source",
+        "derived_aggregate"
+      ]
+    },
+    "restrictions": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/tag"},
+      "uniqueItems": true
+    }
+  }
+}

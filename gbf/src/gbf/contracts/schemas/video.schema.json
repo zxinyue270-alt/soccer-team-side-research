@@ -1,0 +1,208 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:gbf:schema:video",
+  "title": "Video ingest record (video.json)",
+  "description": "Facts about one source video and its canonical frame index, written by gbf.ingest. Canonical frame number = (canonical_id, CFR frame index): canonical_id is the sha256 of the source file bytes; the CFR frame index counts from 0 at the first decoded video frame on a grid of 1/fps seconds (setpts=PTS-STARTPTS, fps filter with round=near). Frame k of the canonical file is the source frame on screen at k/fps seconds after the first frame. Windows hold canonical frames start..end inclusive, bit-identical. No absolute paths, names or user ids appear anywhere; optional relpath fields are relative to the repository root or to DATA_ROOT. The record carries no timestamp so that identical inputs give identical bytes.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "canonical_id",
+    "source",
+    "fps",
+    "frame_count",
+    "width",
+    "height",
+    "cuts",
+    "windows",
+    "tools",
+    "restrictions"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "canonical_id": {
+      "description": "sha256 of the source file bytes; equals source.sha256.",
+      "$ref": "urn:gbf:schema:common#/$defs/sha256"
+    },
+    "source": {
+      "description": "The original file as received, before normalisation.",
+      "$ref": "#/$defs/probe"
+    },
+    "normalized": {
+      "description": "The CFR file whose decode index is the canonical frame index. Absent when the source itself is CFR at fps and is used as is.",
+      "$ref": "#/$defs/probe"
+    },
+    "normalization": {"$ref": "#/$defs/normalization"},
+    "fps": {
+      "description": "Canonical frame rate (frames per second, exact rational).",
+      "$ref": "urn:gbf:schema:common#/$defs/rational"
+    },
+    "frame_count": {
+      "description": "Number of canonical frames; equals the decoded frame count ffprobe reports for the canonical file.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "width": {"description": "Canonical frame width in pixels.", "type": "integer", "minimum": 1},
+    "height": {"description": "Canonical frame height in pixels.", "type": "integer", "minimum": 1},
+    "cuts": {
+      "description": "Canonical frame indices that start a new shot, ascending; frame 0 is never listed.",
+      "type": "array",
+      "items": {"type": "integer", "minimum": 1},
+      "uniqueItems": true
+    },
+    "cut_detection": {"$ref": "#/$defs/cut_detection"},
+    "windows": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/window"}
+    },
+    "tools": {
+      "description": "Versions of the tools and libraries that produced this record.",
+      "type": "object",
+      "required": ["ffmpeg", "ffprobe", "gbf"],
+      "additionalProperties": {"type": "string", "minLength": 1}
+    },
+    "restrictions": {"$ref": "urn:gbf:schema:restrictions#/$defs/restrictions"}
+  },
+  "$defs": {
+    "nullable_rational": {
+      "anyOf": [{"$ref": "urn:gbf:schema:common#/$defs/rational"}, {"type": "null"}]
+    },
+    "probe": {
+      "description": "ffprobe facts about a file and its first video stream. Timestamps (first_pts, end_pts) are integers in units of time_base seconds; end_pts is the end of the last decoded frame. Both are null when some frame has no timestamp or timestamps do not increase.",
+      "type": "object",
+      "required": [
+        "sha256",
+        "bytes",
+        "container",
+        "stream_index",
+        "codec_name",
+        "pix_fmt",
+        "field_order",
+        "width",
+        "height",
+        "frame_width",
+        "frame_height",
+        "rotation_deg",
+        "sample_aspect_ratio",
+        "r_frame_rate",
+        "avg_frame_rate",
+        "time_base",
+        "nb_frames_container",
+        "nb_frames_decoded",
+        "duration_s",
+        "first_pts",
+        "end_pts",
+        "timestamps_cfr",
+        "ffprobe_version"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "sha256": {"$ref": "urn:gbf:schema:common#/$defs/sha256"},
+        "bytes": {"$ref": "urn:gbf:schema:common#/$defs/nonneg_int"},
+        "relpath": {"$ref": "urn:gbf:schema:common#/$defs/relpath"},
+        "container": {"type": "string", "minLength": 1},
+        "stream_index": {"$ref": "urn:gbf:schema:common#/$defs/nonneg_int"},
+        "codec_name": {"type": "string", "minLength": 1},
+        "pix_fmt": {"type": ["string", "null"]},
+        "field_order": {"type": ["string", "null"]},
+        "width": {"description": "Stored frame width in pixels.", "type": "integer", "minimum": 1},
+        "height": {"description": "Stored frame height in pixels.", "type": "integer", "minimum": 1},
+        "frame_width": {"description": "Decoded frame width after display rotation.", "type": "integer", "minimum": 1},
+        "frame_height": {"description": "Decoded frame height after display rotation.", "type": "integer", "minimum": 1},
+        "rotation_deg": {"description": "Display-matrix rotation as ffprobe reports it (degrees); 0 when absent.", "type": "integer"},
+        "sample_aspect_ratio": {
+          "anyOf": [{"type": "string", "pattern": "^[1-9][0-9]*:[1-9][0-9]*$"}, {"type": "null"}]
+        },
+        "r_frame_rate": {"$ref": "#/$defs/nullable_rational"},
+        "avg_frame_rate": {"$ref": "#/$defs/nullable_rational"},
+        "time_base": {"$ref": "urn:gbf:schema:common#/$defs/rational"},
+        "nb_frames_container": {
+          "description": "Frame count stored in the container header, null when it has none.",
+          "anyOf": [{"$ref": "urn:gbf:schema:common#/$defs/nonneg_int"}, {"type": "null"}]
+        },
+        "nb_frames_decoded": {
+          "description": "Frames ffprobe actually decoded (-count_frames).",
+          "$ref": "urn:gbf:schema:common#/$defs/nonneg_int"
+        },
+        "duration_s": {
+          "description": "Stream duration in seconds as the container reports it (the container duration for Matroska), null when unknown.",
+          "anyOf": [{"type": "number", "minimum": 0}, {"type": "null"}]
+        },
+        "first_pts": {"type": ["integer", "null"]},
+        "end_pts": {"type": ["integer", "null"]},
+        "timestamps_cfr": {"description": "Every decoded frame lasts the same number of ticks.", "type": "boolean"},
+        "ffprobe_version": {"type": "string", "minLength": 1}
+      }
+    },
+    "normalization": {
+      "description": "The recipe that produced the normalized file (gbf.ingest.normalize).",
+      "type": "object",
+      "required": ["filter", "fps_mode", "rate", "codec", "preset", "crf", "pix_fmt", "threads", "all_intra", "expected_frames"],
+      "additionalProperties": false,
+      "properties": {
+        "filter": {"type": "string", "minLength": 1},
+        "fps_mode": {"const": "cfr"},
+        "rate": {"$ref": "urn:gbf:schema:common#/$defs/rational"},
+        "codec": {"type": "string", "minLength": 1},
+        "preset": {"type": "string", "minLength": 1},
+        "crf": {"type": "integer", "minimum": 0},
+        "pix_fmt": {"type": "string", "minLength": 1},
+        "threads": {"type": "integer", "minimum": 1},
+        "all_intra": {"type": "boolean"},
+        "expected_frames": {"type": "integer", "minimum": 1}
+      }
+    },
+    "cut_detection": {
+      "description": "How cuts were found. validated stays false until a receipt validates the threshold (P1b).",
+      "type": "object",
+      "required": ["method", "threshold", "bins_per_channel", "sample_rows", "validated"],
+      "additionalProperties": false,
+      "properties": {
+        "method": {"type": "string", "minLength": 1},
+        "threshold": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 2},
+        "bins_per_channel": {"type": "integer", "minimum": 1},
+        "sample_rows": {"type": "integer", "minimum": 1},
+        "validated": {"type": "boolean"}
+      }
+    },
+    "window": {
+      "description": "A lossless all-intra file holding canonical frames start_frame..end_frame inclusive; decoded frame k is bit-identical to canonical frame start_frame + k. Pixel hashes are sha256 over the header 'gbf.rgb24 h=<height> w=<width> c=3' plus a newline, then the raw RGB bytes.",
+      "type": "object",
+      "required": [
+        "window_id",
+        "start_frame",
+        "end_frame",
+        "n_frames",
+        "fps",
+        "first_pixel_sha256",
+        "last_pixel_sha256",
+        "file_sha256",
+        "file_bytes",
+        "codec",
+        "pix_fmt",
+        "container",
+        "source_sha256"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "window_id": {"type": "string", "pattern": "^w[0-9]{6,}-[0-9]{6,}$"},
+        "start_frame": {"$ref": "urn:gbf:schema:common#/$defs/nonneg_int"},
+        "end_frame": {"$ref": "urn:gbf:schema:common#/$defs/nonneg_int"},
+        "n_frames": {"type": "integer", "minimum": 1},
+        "fps": {"$ref": "urn:gbf:schema:common#/$defs/rational"},
+        "first_pixel_sha256": {"$ref": "urn:gbf:schema:common#/$defs/sha256"},
+        "last_pixel_sha256": {"$ref": "urn:gbf:schema:common#/$defs/sha256"},
+        "file_sha256": {"$ref": "urn:gbf:schema:common#/$defs/sha256"},
+        "file_bytes": {"$ref": "urn:gbf:schema:common#/$defs/nonneg_int"},
+        "codec": {"type": "string", "minLength": 1},
+        "pix_fmt": {"type": "string", "minLength": 1},
+        "container": {"type": "string", "minLength": 1},
+        "source_sha256": {
+          "description": "sha256 of the file the window was read from (the source or the normalized file).",
+          "$ref": "urn:gbf:schema:common#/$defs/sha256"
+        },
+        "relpath": {"$ref": "urn:gbf:schema:common#/$defs/relpath"}
+      }
+    }
+  }
+}

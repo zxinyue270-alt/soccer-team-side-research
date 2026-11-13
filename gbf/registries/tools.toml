@@ -1,0 +1,76 @@
+# External tool registry (ADR 0001, ADR 0003).
+# Validated by src/gbf/contracts/schemas/registry_tools.schema.json against the dict
+# that tomllib.load returns.
+#
+# These programs are installed by the user. gbf never bundles or redistributes them,
+# in the repository or in any release. The gate checks that required tools are on PATH
+# (a missing tool is a failure, never a skip), and receipts record the versions found.
+#
+# Dates are quoted "YYYY-MM-DD" strings. tested_version is what the P0 machine had on
+# verified_on. Licence facts are engineering judgements, not legal advice.
+
+schema_version = 1
+
+[[tools]]
+id = "ffmpeg"
+name = "FFmpeg (ffmpeg and ffprobe)"
+kind = "external_binary"
+executables = ["ffmpeg", "ffprobe"]
+required_for = ["runtime", "tests"]
+license = "LGPL-2.1-or-later"
+license_note = "Upstream FFmpeg is LGPL-2.1-or-later, but builds differ: the P0 machine uses a static 8.1.1 Windows build configured with --enable-gpl --enable-version3 (x264 and x265 included), which makes that binary GPL-3.0-or-later. Such builds are never bundled or redistributed (plan P5 licence gate)."
+bundled = false
+version_spec = "any"
+tested_version = "8.1.1"
+runtime_check = "recorded"
+upstream_url = "https://ffmpeg.org/"
+verified_on = "2026-10-21"
+notes = "Must be on PATH. Its version is checked at run time: 'ffmpeg -version' and 'ffprobe -version' are probed and their first lines recorded in every receipt's environment. No minimum version has been established yet; decoding differences between environments are caught by the cross-environment pixel check (prereg/gates.v1.json). Ingest normalises to a constant frame rate (-fps_mode cfr) and checks the frame count against ffprobe (ADR 0003)."
+
+[[tools]]
+id = "git"
+name = "Git"
+kind = "version_control"
+executables = ["git"]
+required_for = ["receipts", "setup"]
+license = "GPL-2.0-only"
+license_note = "Used as an external program only; nothing from Git is redistributed."
+bundled = false
+version_spec = "any"
+tested_version = "2.53.0.windows.2"
+runtime_check = "recorded"
+upstream_url = "https://git-scm.com/"
+verified_on = "2026-10-21"
+notes = "Receipts record the commit and whether the tree was dirty. On Windows clone with core.autocrlf=false; .gitattributes keeps every text file LF (ADR 0003). Pre-registered gates are frozen by pushing to the project remote, and the server push time counts (ADR 0004)."
+
+[[tools]]
+id = "uv"
+name = "uv (Python package and environment manager)"
+kind = "package_manager"
+executables = ["uv"]
+required_for = ["setup"]
+license = "MIT OR Apache-2.0"
+license_note = "Dual-licensed upstream; used only to create the environment."
+bundled = false
+version_spec = "any"
+tested_version = "0.10.12"
+runtime_check = "not_checked"
+upstream_url = "https://github.com/astral-sh/uv"
+verified_on = "2026-10-21"
+notes = "Creates .venv from uv.lock with 'uv sync'. Keep its cache and interpreters inside the checkout: UV_CACHE_DIR=.local/uv-cache and UV_PYTHON_INSTALL_DIR=.local/python (both git-ignored). Run tools with the virtualenv interpreter, not 'uv run'."
+
+[[tools]]
+id = "python"
+name = "CPython"
+kind = "interpreter"
+executables = ["python"]
+required_for = ["runtime", "tests"]
+license = "PSF-2.0"
+license_note = "Python Software Foundation License; the interpreter lives in the user's virtualenv and is never redistributed by gbf."
+bundled = false
+version_spec = ">=3.11,<3.13"
+tested_version = "3.12.13"
+runtime_check = "enforced"
+upstream_url = "https://www.python.org/"
+verified_on = "2026-10-21"
+notes = "Pinned to 3.11-3.12 by requires-python in pyproject.toml (gate G16); .python-version selects 3.12. Set PYTHONUTF8=1."

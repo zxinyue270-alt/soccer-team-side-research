@@ -1,0 +1,21 @@
+# Line endings: every text file is LF in the repository and in the working tree,
+# on every platform (ADR 0003). Hash-registered files are never rewritten by git.
+* text=auto eol=lf
+
+# Hash-registered fixtures, receipts and lock-style registries: byte-exact, no EOL conversion.
+tests/fixtures/** -text
+receipts/** -text
+
+# Binary formats (registered media only; see registries/media.toml and ADR 0002).
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.mp4 binary
+*.mkv binary
+*.npz binary
+*.npy binary
+*.parquet binary
+*.otf binary
+*.ttf binary

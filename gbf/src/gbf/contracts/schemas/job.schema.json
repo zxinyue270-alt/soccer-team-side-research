@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:gbf:schema:job",
+  "title": "Plugin job (job.json)",
+  "description": "What the core asks an out-of-process plugin to do (ADR 0001 section 3, plan 3.1). The core creates a fresh job directory named after the job (an existing directory is an error, gate G17), copies the inputs under in/, writes job.json and never edits it afterwards. The plugin is started with the path of job.json as its last argument; it reads its inputs, writes the requested outputs under out/ and writes plugin-receipt.json (urn:gbf:schema:plugin-receipt) next to job.json. The core accepts nothing before it has checked the receipt, the licence and every hash. Every relpath is relative to the job directory. Frame numbers are canonical (ADR 0003): a frame is (frames.canonical_id, CFR frame index), decoded frame k of the input named by frames.input is canonical frame frames.input_first_frame + k, and the plugin processes canonical frames frames.start..frames.end inclusive. config_sha256 is the sha256 of the canonical JSON of config (sorted keys, compact separators, UTF-8). allowed_licenses lists the SPDX licence identifiers the core will accept for this job (the permissive allowlist plus explicit opt-ins); a plugin whose licence expression is not satisfied by them should refuse to run. restrictions is the union of the inputs' restrictions; the plugin's receipt must carry at least these. Invariants the schema cannot express (file hashes, frame ranges inside the input, unique names) are checked by gbf.plugins.protocol.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "task",
+    "inputs",
+    "frames",
+    "outputs",
+    "config",
+    "config_sha256",
+    "allowed_licenses",
+    "restrictions"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "task": {
+      "description": "What the plugin computes. P0 defines calibration only.",
+      "enum": ["calibration"]
+    },
+    "inputs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/input"}
+    },
+    "frames": {"$ref": "#/$defs/frames"},
+    "outputs": {
+      "description": "Files the plugin must write, each in the named format.",
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/output"}
+    },
+    "config": {
+      "description": "Plugin-specific settings; hashed into config_sha256.",
+      "type": "object"
+    },
+    "config_sha256": {"$ref": "urn:gbf:schema:common#/$defs/sha256"},
+    "allowed_licenses": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/license_id"}
+    },
+    "restrictions": {"$ref": "urn:gbf:schema:restrictions#/$defs/restrictions"}
+  },
+  "$defs": {
+    "name": {
+      "description": "Identifier of an input or output within the job.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "license_id": {
+      "description": "One SPDX licence identifier (or LicenseRef-...), without operators.",
+      "type": "string",
+      "pattern": "^(DocumentRef-[A-Za-z0-9.-]+:)?[A-Za-z0-9][A-Za-z0-9.-]*[+]?$"
+    },
+    "input": {
+      "type": "object",
+      "required": ["name", "relpath", "sha256", "bytes", "restrictions"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"$ref": "#/$defs/name"},
+        "relpath": {
+          "description": "Where the input lies, under in/ of the job directory.",
+          "allOf": [
+            {"$ref": "urn:gbf:schema:common#/$defs/relpath"},
+            {"pattern": "^in/[^/]"}
+          ]
+        },
+        "sha256": {"$ref": "urn:gbf:schema:common#/$defs/sha256"},
+        "bytes": {"$ref": "urn:gbf:schema:common#/$defs/nonneg_int"},
+        "restrictions": {"$ref": "urn:gbf:schema:restrictions#/$defs/restrictions"}
+      }
+    },
+    "frame_hash": {
+      "description": "sha256 over the ASCII header 'gbf.rgb24 h=<height> w=<width> c=3' and a newline, followed by the raw RGB24 bytes of the decoded frame (gbf.ingest.pixel_sha256).",
+      "type": "object",
+      "required": ["frame_index", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "frame_index": {
+          "description": "Canonical frame index.",
+          "$ref": "urn:gbf:schema:common#/$defs/nonneg_int"
+        },
+        "sha256": {"$ref": "urn:gbf:schema:common#/$defs/sha256"}
+      }
+    },
+    "frames": {
+      "type": "object",
+      "required": [
+        "canonical_id",
+        "fps",
+        "input",
+        "input_first_frame",
+        "input_frame_count",
+        "start",
+        "end",
+        "width",
+        "height",
+        "pixel_sha256"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "canonical_id": {
+          "description": "sha256 of the source video file: the first half of every canonical frame number.",
+          "$ref": "urn:gbf:schema:common#/$defs/sha256"
+        },
+        "fps": {"$ref": "urn:gbf:schema:common#/$defs/rational"},
+        "input": {
+          "description": "Name of the input video whose decoded frames are the job's frames.",
+          "$ref": "#/$defs/name"
+        },
+        "input_first_frame": {
+          "description": "Canonical index of the input's decoded frame 0 (the window start for a window file, 0 for the canonical video).",
+          "$ref": "urn:gbf:schema:common#/$defs/nonneg_int"
+        },
+        "input_frame_count": {
+          "description": "Number of frames the input decodes to.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "start": {
+          "description": "First canonical frame to process.",
+          "$ref": "urn:gbf:schema:common#/$defs/nonneg_int"
+        },
+        "end": {
+          "description": "Last canonical frame to process (inclusive).",
+          "$ref": "urn:gbf:schema:common#/$defs/nonneg_int"
+        },
+        "width": {"description": "Decoded frame width, pixels.", "type": "integer", "minimum": 1},
+        "height": {"description": "Decoded frame height, pixels.", "type": "integer", "minimum": 1},
+        "pixel_sha256": {
+          "description": "Pixel hashes of some canonical frames as the core decodes them. The plugin must report the same hashes in its receipt's decoded_frames: proof that it decodes the frames the job means, with any patches in effect (gate G5).",
+          "type": "array",
+          "items": {"$ref": "#/$defs/frame_hash"}
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": ["name", "relpath", "format"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"$ref": "#/$defs/name"},
+        "relpath": {
+          "description": "Where the plugin must write the output, under out/ of the job directory.",
+          "allOf": [
+            {"$ref": "urn:gbf:schema:common#/$defs/relpath"},
+            {"pattern": "^out/[^/]"}
+          ]
+        },
+        "format": {
+          "description": "calib.v1: gbf.plugins.calib (Arrow schema of calib.parquet).",
+          "enum": ["calib.v1"]
+        }
+      }
+    }
+  }
+}

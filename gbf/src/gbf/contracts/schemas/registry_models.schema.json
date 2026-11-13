@@ -1,0 +1,226 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:gbf:schema:registry_models",
+  "title": "Model and component registry",
+  "description": "Validates the dict that tomllib.load returns for registries/models.toml: every model, weight file or third-party component the project plan mentions, with its code and weight licences, the restriction tags its outputs carry, its status and where it may run (ADR 0001). TOML has no null and its date type is not a JSON string, so dates are quoted 'YYYY-MM-DD' strings and inapplicable values use the sentinels documented on each field. Id uniqueness is checked by the registry loader, not by JSON Schema. An entry the core runs although its licences are not settled (allowed_in_core with an open question or restrictions) must record core_exception, the ADR 0001 amendment that allows it. Licence facts are engineering judgements, not legal advice.",
+  "type": "object",
+  "required": ["schema_version", "models"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "models": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/model"}
+    }
+  },
+  "$defs": {
+    "id": {
+      "description": "Stable lowercase identifier: letters and digits in groups joined by '-' or '.'.",
+      "type": "string",
+      "pattern": "^[a-z0-9]+([.-][a-z0-9]+)*$"
+    },
+    "text": {"type": "string", "minLength": 1},
+    "url": {
+      "description": "Absolute http(s) URL in printable ASCII without spaces (percent-encode anything else).",
+      "type": "string",
+      "pattern": "^https?://[!-~]+$"
+    },
+    "license": {
+      "description": "SPDX licence expression (identifiers joined by AND, OR or WITH), LicenseRef-* for terms without an SPDX id, NONE when upstream declares no licence (all rights reserved by default), NOASSERTION when the licence has not been verified, NOT_APPLICABLE when the component has no such part (for example no weights).",
+      "type": "string",
+      "pattern": "^(NOT_APPLICABLE|[A-Za-z0-9.+()-]+( (AND|OR|WITH) [A-Za-z0-9.+()-]+)*)$"
+    },
+    "dependency": {
+      "description": "A dependency whose licence matters for where the component may run.",
+      "type": "object",
+      "required": ["name", "license"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"$ref": "#/$defs/text"},
+        "license": {"$ref": "#/$defs/license"},
+        "note": {"$ref": "#/$defs/text"}
+      }
+    },
+    "model": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "role",
+        "upstream_url",
+        "code_license",
+        "weights_license",
+        "training_data",
+        "restrictions",
+        "status",
+        "allowed_in_core",
+        "default_enabled",
+        "plugin",
+        "verified_url",
+        "verified_on",
+        "notes"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "name": {"$ref": "#/$defs/text"},
+        "role": {
+          "enum": [
+            "detection",
+            "tracking",
+            "reid",
+            "appearance_embedding",
+            "pose_2d",
+            "pose_3d",
+            "body_model",
+            "world_grounding",
+            "calibration",
+            "jersey_ocr",
+            "pipeline",
+            "framework",
+            "patch",
+            "multiview_reference",
+            "technique_analysis"
+          ]
+        },
+        "variants": {
+          "description": "Model sizes or variants covered by this entry.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/text"}
+        },
+        "upstream_url": {"$ref": "#/$defs/url"},
+        "code_license": {"$ref": "#/$defs/license"},
+        "weights_license": {"$ref": "#/$defs/license"},
+        "training_data": {
+          "description": "What is known about the data behind the weights and its licences; say 'not verified' when unknown.",
+          "$ref": "#/$defs/text"
+        },
+        "dependencies": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/dependency"}
+        },
+        "restrictions": {
+          "description": "Tags carried by this component's outputs (ADR 0002).",
+          "$ref": "urn:gbf:schema:restrictions#/$defs/restrictions"
+        },
+        "status": {
+          "description": "planned: intended for use, no open licence question. experimental: kept off public default paths until an open question (usually training-data licences) is resolved; it may carry research_nc, and only core_exception lets the core run it. research_only: runs only in plugin-research-nc, outputs carry research_nc. blocked: never used (no code, weights, import or dependency). plugin_only: runs only out of process in the named plugin or optional extra, never imported by the core.",
+          "enum": ["planned", "experimental", "research_only", "blocked", "plugin_only"]
+        },
+        "allowed_in_core": {
+          "description": "True when the licences of code, weights and required dependencies allow the MIT core (or its permissive perception extra) to import or ship the component, or when core_exception records the ADR 0001 exception under which the core runs it.",
+          "type": "boolean"
+        },
+        "default_enabled": {
+          "description": "True when the component runs without an extra opt-in once its host is installed and, for non-permissive licences, allowed with --allow-license (ADR 0001).",
+          "type": "boolean"
+        },
+        "plugin": {
+          "description": "Host that runs the component. none: not run by any plugin (the core runs it, core-eligible tooling, or blocked). perception-extra: the optional permissive perception stack planned for P5.",
+          "enum": [
+            "none",
+            "perception-extra",
+            "plugin-sngs",
+            "plugin-sam3d",
+            "plugin-nbjw",
+            "plugin-research-nc"
+          ]
+        },
+        "blocked_reason": {"$ref": "#/$defs/text"},
+        "core_exception": {
+          "description": "Only for an experimental entry that the core runs (allowed_in_core): the dated ADR 0001 amendment that allows it and what limits it. Its restrictions reach every output of a run that uses it.",
+          "$ref": "#/$defs/text"
+        },
+        "verified_url": {
+          "description": "Primary source read for the licence facts.",
+          "$ref": "#/$defs/url"
+        },
+        "verified_on": {
+          "description": "Date the facts were read from verified_url.",
+          "$ref": "urn:gbf:schema:common#/$defs/date"
+        },
+        "notes": {"$ref": "#/$defs/text"}
+      },
+      "allOf": [
+        {
+          "if": {"required": ["status"], "properties": {"status": {"const": "blocked"}}},
+          "then": {
+            "required": ["blocked_reason"],
+            "properties": {
+              "allowed_in_core": {"const": false},
+              "default_enabled": {"const": false},
+              "plugin": {"const": "none"}
+            }
+          },
+          "else": {"properties": {"blocked_reason": false}}
+        },
+        {
+          "if": {"required": ["status"], "properties": {"status": {"const": "research_only"}}},
+          "then": {
+            "properties": {
+              "plugin": {"const": "plugin-research-nc"},
+              "allowed_in_core": {"const": false},
+              "default_enabled": {"const": false},
+              "restrictions": {"contains": {"const": "research_nc"}}
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["restrictions"],
+            "properties": {"restrictions": {"contains": {"const": "research_nc"}}}
+          },
+          "then": {"properties": {"status": {"enum": ["research_only", "blocked", "experimental"]}}}
+        },
+        {
+          "if": {"required": ["status"], "properties": {"status": {"const": "plugin_only"}}},
+          "then": {
+            "properties": {
+              "allowed_in_core": {"const": false},
+              "plugin": {"not": {"const": "none"}}
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["status"],
+            "properties": {"status": {"const": "experimental"}},
+            "not": {"required": ["core_exception"]}
+          },
+          "then": {
+            "properties": {
+              "allowed_in_core": {"const": false},
+              "default_enabled": {"const": false}
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["allowed_in_core"],
+            "properties": {"allowed_in_core": {"const": true}},
+            "not": {"required": ["core_exception"]}
+          },
+          "then": {
+            "properties": {
+              "status": {"const": "planned"},
+              "restrictions": {"maxItems": 0}
+            }
+          }
+        },
+        {
+          "if": {"required": ["core_exception"]},
+          "then": {
+            "properties": {
+              "allowed_in_core": {"const": true},
+              "status": {"const": "experimental"}
+            }
+          }
+        }
+      ]
+    }
+  }
+}

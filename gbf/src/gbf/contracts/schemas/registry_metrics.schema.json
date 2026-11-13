@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:gbf:schema:registry_metrics",
+  "title": "Metric registry",
+  "description": "Validates the dict that tomllib.load returns for registries/metrics.toml: every metric of plan section 4 (and the C tier of plan 1.1) with its tier, display prerequisites, error status, the datasets that may certify it, and the data sources of any fitted parameters (ADR 0002 rule 3, ADR 0004). Renderers, cards and narration consult this registry; a C-tier metric is blocked everywhere. min_fps and min_bbox_px are 0 when not applicable (official values come from a provider; C metrics are blocked whatever the input). Dates are quoted 'YYYY-MM-DD' strings. Id uniqueness and cross-references to registries/data.toml are checked by the registry loader.",
+  "type": "object",
+  "required": ["schema_version", "metrics"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "metrics": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/metric"}
+    }
+  },
+  "$defs": {
+    "id": {
+      "description": "Stable lowercase identifier: letters and digits in groups joined by '-' or '.'.",
+      "type": "string",
+      "pattern": "^[a-z0-9]+([.-][a-z0-9]+)*$"
+    },
+    "text": {"type": "string", "minLength": 1},
+    "ids": {
+      "description": "Ids from registries/data.toml.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/id"}
+    },
+    "fitted_parameter": {
+      "description": "A fitted threshold, table or network the metric depends on. It inherits the restrictions of its data sources; commercial builds accept it only when every source allows commercial use (ADR 0002 rule 3).",
+      "type": "object",
+      "required": ["name", "data_sources", "restrictions"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"$ref": "#/$defs/id"},
+        "data_sources": {"$ref": "#/$defs/ids", "minItems": 1},
+        "restrictions": {"$ref": "urn:gbf:schema:restrictions#/$defs/restrictions"},
+        "note": {"$ref": "#/$defs/text"}
+      }
+    },
+    "metric": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "tier",
+        "blocked",
+        "min_fps",
+        "min_bbox_px",
+        "thresholds_provisional",
+        "needs_fresh_calibration",
+        "needs_contact_frame",
+        "needs_ball_detection",
+        "error_status",
+        "certified_by",
+        "method",
+        "limitations"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "name": {"$ref": "#/$defs/text"},
+        "tier": {
+          "description": "official: provider values with a source badge. A: trajectory level, with coverage and a sourced error reference. A_candidate: 3D, shown as 'unverified' until P4 measures it and it beats its 2D baseline. B: experimental badge, bins and confidence only. C: not measurable from monocular 25 fps broadcast; blocked.",
+          "enum": ["official", "A", "A_candidate", "B", "C"]
+        },
+        "blocked": {"type": "boolean"},
+        "blocked_reason": {"$ref": "#/$defs/text"},
+        "min_fps": {
+          "description": "Lowest source frame rate (frames per second) the metric is defined and validated for; 0 = not applicable.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_bbox_px": {
+          "description": "Minimum height in pixels of the subject's bounding box in the source frame; 0 = no box-height requirement or not applicable.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "thresholds_provisional": {
+          "description": "True while min_fps or min_bbox_px is a candidate value awaiting the measurement named in the limitations (for example the P1 benchmark).",
+          "type": "boolean"
+        },
+        "needs_fresh_calibration": {
+          "description": "Requires a camera calibration computed on the frame itself, never one carried over from earlier frames (gate G6).",
+          "type": "boolean"
+        },
+        "needs_contact_frame": {
+          "description": "Requires a contact frame from the keyframe module that passed gate G14, or a manually confirmed frame.",
+          "type": "boolean"
+        },
+        "needs_ball_detection": {
+          "description": "Requires measured ball detection (P5); unavailable before it.",
+          "type": "boolean"
+        },
+        "two_d_baseline": {
+          "description": "The 2D method an A_candidate metric must beat on the same ground truth (gate G20).",
+          "$ref": "#/$defs/text"
+        },
+        "error_status": {
+          "description": "provider: the value and its error belong to the data provider (official tier only). unmeasured: no error measured yet; cards show 'unverified'. measured: an error was measured on held-out data and error_receipt points at that receipt.",
+          "enum": ["provider", "unmeasured", "measured"]
+        },
+        "error_receipt": {"$ref": "urn:gbf:schema:common#/$defs/relpath"},
+        "certified_by": {
+          "description": "Datasets whose results may certify this metric's error claim (ADR 0004). Empty when none is identified yet.",
+          "$ref": "#/$defs/ids"
+        },
+        "weak_label_sources": {
+          "description": "Datasets whose labels give agreement rates only (weak evidence), never accuracy.",
+          "$ref": "#/$defs/ids",
+          "minItems": 1
+        },
+        "data_sources": {
+          "description": "Datasets that provide the value itself (official tier).",
+          "$ref": "#/$defs/ids",
+          "minItems": 1
+        },
+        "literature": {
+          "description": "Published figures shown as context (error.kind literature), never as our error.",
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/text"}
+        },
+        "method": {"$ref": "#/$defs/text"},
+        "limitations": {"$ref": "#/$defs/text"},
+        "fitted_parameters": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/fitted_parameter"}
+        }
+      },
+      "allOf": [
+        {
+          "if": {"required": ["tier"], "properties": {"tier": {"const": "C"}}},
+          "then": {
+            "required": ["blocked_reason"],
+            "properties": {
+              "blocked": {"const": true},
+              "min_fps": {"const": 0},
+              "min_bbox_px": {"const": 0}
+            }
+          },
+          "else": {
+            "properties": {
+              "blocked": {"const": false},
+              "blocked_reason": false
+            }
+          }
+        },
+        {
+          "if": {"required": ["tier"], "properties": {"tier": {"const": "official"}}},
+          "then": {
+            "required": ["data_sources"],
+            "properties": {
+              "error_status": {"const": "provider"},
+              "min_fps": {"const": 0},
+              "min_bbox_px": {"const": 0}
+            }
+          },
+          "else": {
+            "properties": {
+              "error_status": {"enum": ["unmeasured", "measured"]},
+              "data_sources": false
+            }
+          }
+        },
+        {
+          "if": {"required": ["tier"], "properties": {"tier": {"const": "A_candidate"}}},
+          "then": {"required": ["two_d_baseline"]},
+          "else": {"properties": {"two_d_baseline": false}}
+        },
+        {
+          "if": {"required": ["tier"], "properties": {"tier": {"enum": ["A", "A_candidate", "B"]}}},
+          "then": {"properties": {"min_fps": {"minimum": 1}}}
+        },
+        {
+          "if": {"required": ["error_status"], "properties": {"error_status": {"const": "measured"}}},
+          "then": {"required": ["error_receipt"]},
+          "else": {"properties": {"error_receipt": false}}
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,308 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:gbf:schema:registry_data",
+  "title": "Data rights registry",
+  "description": "Validates the dict that tomllib.load returns for registries/data.toml: for every dataset the project uses, considers or has rejected, where the permission comes from (rights_source), the licence label, the restriction tags its derivatives carry, the uses its terms allow, whether aggregate results may be published, and when and where those facts were verified (ADR 0002). Dates are quoted 'YYYY-MM-DD' strings. The conditional rules below encode the tag actions of ADR 0002 so that an inconsistent edit fails validation. Id uniqueness and cross-references are checked by the registry loader. Engineering judgement, not legal advice.",
+  "type": "object",
+  "required": ["schema_version", "datasets"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "datasets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/dataset"}
+    }
+  },
+  "$defs": {
+    "id": {
+      "description": "Stable lowercase identifier: letters and digits in groups joined by '-' or '.'.",
+      "type": "string",
+      "pattern": "^[a-z0-9]+([.-][a-z0-9]+)*$"
+    },
+    "text": {"type": "string", "minLength": 1},
+    "url": {
+      "description": "Absolute http(s) URL in printable ASCII without spaces (percent-encode anything else).",
+      "type": "string",
+      "pattern": "^https?://[!-~]+$"
+    },
+    "license": {
+      "description": "SPDX licence expression, LicenseRef-* for terms without an SPDX id, NONE when no licence is declared, NOASSERTION when not verified.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9.+()-]+( (AND|OR|WITH) [A-Za-z0-9.+()-]+)*$"
+    },
+    "use": {
+      "description": "local_processing: on the maintainer's own machine. cloud_processing: on rented or hosted compute such as Kaggle (plan 3.6). evaluation: as reference or ground truth to measure our error. fitting: to fit thresholds, tables or weights (results inherit restrictions, ADR 0002 rule 3). smoke_testing: in tests, CI fixtures and smoke runs. publish_aggregates: publish aggregate statistics (derived_aggregate). publish_analysis: publish analyses, cards or visualisations about specific items. publish_media: publish the dataset's own pixels (frames, clips, screenshots). redistribute: ship the data itself in the repository, releases or other datasets. commercial: any commercial use. third_party_services: send the data to third-party services such as LLM or TTS APIs.",
+      "enum": [
+        "local_processing",
+        "cloud_processing",
+        "evaluation",
+        "fitting",
+        "smoke_testing",
+        "publish_aggregates",
+        "publish_analysis",
+        "publish_media",
+        "redistribute",
+        "commercial",
+        "third_party_services"
+      ]
+    },
+    "clause": {
+      "description": "A paraphrased clause of the terms and how gbf handles it. A paraphrase is not the agreement; read the agreement before accepting it.",
+      "type": "object",
+      "required": ["ref", "summary", "handling"],
+      "additionalProperties": false,
+      "properties": {
+        "ref": {"$ref": "#/$defs/text"},
+        "summary": {"$ref": "#/$defs/text"},
+        "handling": {"$ref": "#/$defs/text"}
+      }
+    },
+    "dataset": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "kind",
+        "status",
+        "acquisition",
+        "license",
+        "rights_source",
+        "restrictions",
+        "allowed_uses",
+        "aggregate_publication",
+        "committable",
+        "verified_on",
+        "notes"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "name": {"$ref": "#/$defs/text"},
+        "kind": {
+          "enum": [
+            "events",
+            "annotations",
+            "broadcast_video",
+            "video_with_tracking_labels",
+            "events_and_tracking",
+            "tracking",
+            "pose_3d",
+            "images",
+            "synthetic"
+          ]
+        },
+        "status": {
+          "description": "planned: intended for use. in_use: used by committed code or receipts. local_only: used only on the maintainer's machine, never uploaded, shared or committed. rejected: deliberately not used. blocked: rights unclear or prohibitive; the gate rejects any use.",
+          "enum": ["planned", "in_use", "local_only", "rejected", "blocked"]
+        },
+        "acquisition": {
+          "description": "pinned_download: fetched at run time by a script that pins a revision and verifies a hash (see pins). download: fetched at run time; pin still to be added. after_approval: obtained only after an application is approved. local_only: exists only on the maintainer's machine. generated: produced by gbf's own code. none: not acquired.",
+          "enum": ["pinned_download", "download", "after_approval", "local_only", "generated", "none"]
+        },
+        "license": {"$ref": "#/$defs/license"},
+        "rights_source": {
+          "description": "Where the permission to use the data comes from. A licence label shown by a hosting platform is recorded but is not a rights source by itself.",
+          "$ref": "#/$defs/text"
+        },
+        "restrictions": {
+          "description": "Tags every per-item derivative inherits (ADR 0002).",
+          "$ref": "urn:gbf:schema:restrictions#/$defs/restrictions"
+        },
+        "allowed_uses": {
+          "description": "Uses the terms allow for this project; anything not listed is not allowed.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/use"}
+        },
+        "aggregate_publication": {
+          "description": "Whether aggregate statistics (derived_aggregate) computed from this dataset may be published, verified against its terms.",
+          "enum": ["allowed", "not_allowed", "unverified"]
+        },
+        "committable": {
+          "description": "True when the data itself (or a small slice) may be committed to the repository, with its attribution.",
+          "type": "boolean"
+        },
+        "attribution": {"$ref": "#/$defs/text"},
+        "pins": {
+          "description": "Repository-relative file that pins the download (revision, size, hash).",
+          "$ref": "urn:gbf:schema:common#/$defs/relpath"
+        },
+        "subset": {
+          "description": "The part of the dataset the project uses.",
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/text"}
+        },
+        "clauses": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/clause"}
+        },
+        "reasons": {
+          "description": "Why the dataset is rejected or blocked.",
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/text"}
+        },
+        "sha256": {
+          "description": "Hash of a single local file, for local_only entries.",
+          "$ref": "urn:gbf:schema:common#/$defs/sha256"
+        },
+        "verified_url": {
+          "description": "Primary source read for the rights facts.",
+          "$ref": "#/$defs/url"
+        },
+        "verified_on": {
+          "description": "Date the rights facts were last read or the entry was last confirmed.",
+          "$ref": "urn:gbf:schema:common#/$defs/date"
+        },
+        "notes": {"$ref": "#/$defs/text"}
+      },
+      "allOf": [
+        {
+          "if": {"required": ["status"], "properties": {"status": {"enum": ["rejected", "blocked"]}}},
+          "then": {
+            "required": ["reasons"],
+            "properties": {
+              "allowed_uses": {"maxItems": 0},
+              "committable": {"const": false},
+              "acquisition": {"const": "none"}
+            }
+          },
+          "else": {"properties": {"reasons": false}}
+        },
+        {
+          "if": {"required": ["status"], "properties": {"status": {"const": "local_only"}}},
+          "then": {
+            "properties": {
+              "acquisition": {"const": "local_only"},
+              "committable": {"const": false},
+              "restrictions": {"contains": {"const": "no_share"}},
+              "allowed_uses": {
+                "items": {"enum": ["local_processing", "evaluation", "fitting", "smoke_testing"]}
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["acquisition"],
+            "properties": {"acquisition": {"enum": ["local_only", "generated"]}}
+          },
+          "else": {"required": ["verified_url"]}
+        },
+        {
+          "if": {
+            "required": ["acquisition"],
+            "properties": {"acquisition": {"const": "pinned_download"}}
+          },
+          "then": {"required": ["pins"]}
+        },
+        {
+          "if": {"required": ["restrictions"], "properties": {"restrictions": {"contains": {"const": "nda"}}}},
+          "then": {
+            "properties": {
+              "committable": {"const": false},
+              "allowed_uses": {
+                "not": {
+                  "contains": {
+                    "enum": [
+                      "publish_analysis",
+                      "publish_media",
+                      "redistribute",
+                      "commercial",
+                      "third_party_services"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["restrictions"],
+            "properties": {"restrictions": {"contains": {"const": "no_share"}}}
+          },
+          "then": {
+            "properties": {
+              "committable": {"const": false},
+              "allowed_uses": {
+                "not": {
+                  "contains": {
+                    "enum": [
+                      "cloud_processing",
+                      "publish_media",
+                      "redistribute",
+                      "third_party_services"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["restrictions"],
+            "properties": {"restrictions": {"contains": {"const": "research_nc"}}}
+          },
+          "then": {
+            "properties": {
+              "committable": {"const": false},
+              "allowed_uses": {
+                "not": {
+                  "contains": {
+                    "enum": ["publish_analysis", "publish_media", "redistribute", "commercial"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["restrictions"],
+            "properties": {"restrictions": {"contains": {"const": "non_commercial"}}}
+          },
+          "then": {"properties": {"allowed_uses": {"not": {"contains": {"const": "commercial"}}}}}
+        },
+        {
+          "if": {
+            "required": ["restrictions"],
+            "properties": {"restrictions": {"contains": {"const": "statsbomb_logo"}}}
+          },
+          "then": {"required": ["attribution"]}
+        },
+        {
+          "if": {"required": ["license"], "properties": {"license": {"pattern": "^CC-BY"}}},
+          "then": {"required": ["attribution"]}
+        },
+        {
+          "if": {"required": ["committable"], "properties": {"committable": {"const": true}}},
+          "then": {
+            "required": ["attribution"],
+            "properties": {
+              "restrictions": {"maxItems": 0},
+              "allowed_uses": {"contains": {"const": "redistribute"}}
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["aggregate_publication"],
+            "properties": {"aggregate_publication": {"const": "allowed"}}
+          },
+          "then": {
+            "required": ["allowed_uses"],
+            "properties": {"allowed_uses": {"contains": {"const": "publish_aggregates"}}}
+          },
+          "else": {
+            "properties": {"allowed_uses": {"not": {"contains": {"const": "publish_aggregates"}}}}
+          }
+        }
+      ]
+    }
+  }
+}

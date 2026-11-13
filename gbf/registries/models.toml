@@ -1,0 +1,734 @@
+# Model and component registry (ADR 0001).
+# Validated by src/gbf/contracts/schemas/registry_models.schema.json against the dict
+# that tomllib.load returns.
+#
+# One entry per model, weight file or third-party component the project plan mentions:
+# where it comes from, the licences of its code and weights, the restriction tags its
+# outputs carry (ADR 0002), and where it may run. Gate G3 (P0) fails on imports in src/
+# and tests/, and on dependencies in pyproject.toml and uv.lock, of the module and
+# distribution names that src/gbf/gate/imports.py lists by registry id (REGISTRY_BANS,
+# written by hand) for every entry whose status is blocked, research_only or
+# plugin_only, and it fails when such an entry has no row there. P5 adds pip-licenses,
+# REUSE and generated notices.
+#
+# Conventions
+# - Dates are quoted "YYYY-MM-DD" strings so the dict validates as JSON.
+# - Licences are SPDX expressions or LicenseRef-* ids. NONE = upstream declares no
+#   licence (all rights reserved by default); NOASSERTION = not verified;
+#   NOT_APPLICABLE = the component has no such part (for example no weights).
+#   GPL texts without an "or later" notice are recorded as -only (conservative).
+# - status
+#     planned        intended for use; no open licence question.
+#     experimental   off public default paths until an open question (usually the
+#                    licences of the training data) is resolved. It may carry
+#                    research_nc; only core_exception lets the core run it.
+#     research_only  runs only in plugin-research-nc; outputs carry research_nc; never
+#                    part of any distribution.
+#     blocked        never used: no code, no weights, no import, no dependency.
+#     plugin_only    runs only out of process in the named host; the core never imports it.
+# - allowed_in_core: the licences of code, weights and required dependencies allow the
+#   MIT core (or its permissive perception extra) to import or ship the component, or
+#   core_exception records why the core runs it anyway.
+# - core_exception: only on an experimental entry the core runs although its licence
+#   question is open: the dated ADR 0001 amendment that allows it. Its restrictions
+#   reach every output of a run that uses it.
+# - default_enabled: runs without an extra opt-in once its host is installed and, for
+#   non-permissive licences, allowed with --allow-license (ADR 0001).
+# - plugin: none | perception-extra | plugin-sngs | plugin-sam3d | plugin-nbjw |
+#   plugin-research-nc. none = no plugin runs it (the core does, it is tooling, or it is
+#   blocked). perception-extra is the optional permissive (MIT/Apache) perception stack
+#   planned for P5, with its own lock file and CI.
+# - verified_url / verified_on: the primary source read for the licence facts, and when.
+#   Facts dated 2026-10-21 come from the project's read-only research of that day and
+#   the second check in plan appendix B; "not re-checked" marks reviewer facts that
+#   appendix B did not re-read.
+#
+# Licence statements are engineering judgements, not legal advice.
+
+schema_version = 1
+
+# ---------------------------------------------------------------------------------
+# 3D body estimation (plugin-sam3d)
+# ---------------------------------------------------------------------------------
+
+[[models]]
+id = "sam-3d-body"
+name = "SAM 3D Body (Meta)"
+role = "pose_3d"
+upstream_url = "https://github.com/facebookresearch/sam-3d-body"
+code_license = "LicenseRef-SAM-License-2025-11-19"
+weights_license = "LicenseRef-SAM-License-2025-11-19"
+training_data = "Not verified by this project."
+restrictions = ["sam_license"]
+status = "plugin_only"
+allowed_in_core = false
+default_enabled = true
+plugin = "plugin-sam3d"
+verified_url = "https://github.com/facebookresearch/sam-3d-body/blob/main/LICENSE"
+verified_on = "2026-10-21"
+notes = "SAM License (2025-11-19 version): commercial use and distribution allowed, not an OSI licence; clauses 1.b.i-1.b.v, 5.b, 6 and 8 are handled in ADR 0001. Weights (Hugging Face facebook/sam-3d-body-dinov3) need manual approval; if refused, never borrow an account or use a proxy. Third-party mirrors only with the full SAM License text and a sha256 equal to the official file. Outputs may be published with the acknowledgement of clause 1.b.ii. Whether public or commercial builds enable 3D by default is an open maintainer decision (plan section 10, item 1). The plugin passes boxes, K scaled to the real resolution and 2D prompts, runs body decoding only, fp16 + SDPA on T4."
+
+[[models]]
+id = "plugin-sam3d-patches"
+name = "plugin-sam3d patches to sam_3d_body sources (fp16, SDPA, body decoder only)"
+role = "patch"
+upstream_url = "https://github.com/facebookresearch/sam-3d-body"
+code_license = "LicenseRef-SAM-License-2025-11-19"
+weights_license = "NOT_APPLICABLE"
+training_data = "Not applicable: inference configuration only."
+restrictions = ["sam_license"]
+status = "plugin_only"
+allowed_in_core = false
+default_enabled = true
+plugin = "plugin-sam3d"
+verified_url = "https://github.com/facebookresearch/sam-3d-body/blob/main/LICENSE"
+verified_on = "2026-10-21"
+notes = "Any change that lands in sam_3d_body source files is a derivative work: it lives in the plugin's SAM-License patch directory and is distributed with the full agreement text (clause 1.b.i). The plugin's MIT glue layer only imports sam_3d_body and never modifies it. No pruning or analysis of model internals: whether clause 1.b.iv (no reverse engineering) leaves room for that needs legal advice. Registered under the SAM License by gate G3."
+
+[[models]]
+id = "mhr"
+name = "MHR body model (facebookresearch/MHR)"
+role = "body_model"
+upstream_url = "https://github.com/facebookresearch/MHR"
+code_license = "Apache-2.0"
+weights_license = "Apache-2.0"
+training_data = "Not verified by this project."
+restrictions = []
+status = "planned"
+allowed_in_core = true
+default_enabled = true
+plugin = "plugin-sam3d"
+verified_url = "https://github.com/facebookresearch/MHR"
+verified_on = "2026-10-21"
+notes = "Body model behind SAM 3D Body's output (camera-frame MHR joints). B-tier flexion snapshots read angles from MHR segment rotations in plugin output files; the core reads those files and never imports the plugin."
+
+[[models]]
+id = "gem-x"
+name = "GEM-X (NVIDIA)"
+role = "pose_3d"
+upstream_url = "https://github.com/NVlabs/GEM-X"
+code_license = "Apache-2.0"
+weights_license = "LicenseRef-NVIDIA-Open-Model-License"
+training_data = "The model card says it was trained only on NVIDIA-owned data; not verified by this project."
+dependencies = [
+  { name = "SAM 3D Body checkpoint", license = "LicenseRef-SAM-License-2025-11-19", note = "Called internally; Hugging Face removed this checkpoint on 2026-10-20." },
+]
+restrictions = ["sam_license"]
+status = "experimental"
+allowed_in_core = false
+default_enabled = false
+plugin = "plugin-sam3d"
+verified_url = "https://huggingface.co/nvidia/GEM-X"
+verified_on = "2026-10-21"
+notes = "Optional commercially usable second opinion for gate G12; it calls SAM 3D Body internally, so the two models' errors are correlated and their independence is limited. The model card says NVIDIA Open Model License (commercial use allowed) while the LICENSE file in the weights repository is Apache-2.0 text: inconsistent. Its SAM extraction path is registered under the SAM License and never enters the core (G3). A new release is announced for 2026-10-30; re-verify before any use."
+
+[[models]]
+id = "fast-sam-3d-body"
+name = "Fast SAM 3D Body"
+role = "pose_3d"
+upstream_url = "https://github.com/yangtiming/Fast-SAM-3D-Body"
+code_license = "MIT AND LicenseRef-SAM-License-2025-11-19"
+weights_license = "LicenseRef-SAM-License-2025-11-19"
+training_data = "Uses the SAM 3D Body checkpoints."
+dependencies = [
+  { name = "ultralytics", license = "AGPL-3.0-only", note = "Required by its pipeline." },
+]
+restrictions = ["sam_license", "agpl_network_source"]
+status = "blocked"
+allowed_in_core = false
+default_enabled = false
+plugin = "none"
+blocked_reason = "Its pipeline depends on Ultralytics (AGPL-3.0); not used until a separate AGPL assessment is done (plan 8.2)."
+verified_url = "https://github.com/yangtiming/Fast-SAM-3D-Body"
+verified_on = "2026-10-21"
+notes = "The repository's top-level MIT label does not cover sam_3d_body/ (all 48 files carry Meta copyright headers), tools/ or demo.py: those are SAM License material (appendix B S2). Registered under the SAM License by gate G3."
+
+# ---------------------------------------------------------------------------------
+# Research only (plugin-research-nc): never installed by default, never distributed
+# ---------------------------------------------------------------------------------
+
+[[models]]
+id = "nlf-l"
+name = "NLF-L (Neural Localizer Fields)"
+role = "pose_3d"
+upstream_url = "https://github.com/isarandi/nlf"
+code_license = "MIT"
+weights_license = "LicenseRef-NLF-Weights-NonCommercial-Research"
+training_data = "Weights are for non-commercial research only (v0.1.0 release notes); training-data licences not verified."
+dependencies = [
+  { name = "SMPL-family model files", license = "LicenseRef-SMPL-Model-License", note = "Non-commercial; each user registers and downloads them." },
+]
+restrictions = ["research_nc"]
+status = "research_only"
+allowed_in_core = false
+default_enabled = false
+plugin = "plugin-research-nc"
+verified_url = "https://github.com/isarandi/nlf"
+verified_on = "2026-10-21"
+notes = "The code is MIT; the restriction applies to the weights. Research-mode fallback while SAM 3D Body weights are not approved (plan P1)."
+
+[[models]]
+id = "rtmw3d"
+name = "RTMW3D (mmpose rtmpose3d project)"
+role = "pose_3d"
+upstream_url = "https://github.com/open-mmlab/mmpose/tree/main/projects/rtmpose3d"
+code_license = "Apache-2.0"
+weights_license = "NOASSERTION"
+training_data = "Licences of the training datasets not verified."
+restrictions = ["research_nc"]
+status = "research_only"
+allowed_in_core = false
+default_enabled = false
+plugin = "plugin-research-nc"
+verified_url = "https://github.com/open-mmlab/mmpose/tree/main/projects/rtmpose3d"
+verified_on = "2026-10-21"
+notes = "Kept in plugin-research-nc until the training-data licences are checked (plan 3.1, 8.3 and section 11). mmpose has had no commit on main since 2025-08."
+
+[[models]]
+id = "field-converter"
+name = "Field Converter (calibration, foot grounding and temporal residuals for broadcast pose)"
+role = "world_grounding"
+upstream_url = "https://github.com/KhanSimon/field_converter"
+code_license = "Apache-2.0"
+weights_license = "MIT"
+training_data = "Trained on WorldPose and FIFA challenge data according to its paper; the README says data must be obtained separately under each dataset's own conditions."
+restrictions = ["research_nc"]
+status = "research_only"
+allowed_in_core = false
+default_enabled = false
+plugin = "plugin-research-nc"
+verified_url = "https://github.com/KhanSimon/field_converter"
+verified_on = "2026-10-21"
+notes = "Weights are labelled MIT on Hugging Face (KhanSimon/field_converter), but WorldPose terms forbid redistribution including converted model parameters, so the weights are treated as research_nc (plan section 11; appendix B F6)."
+
+[[models]]
+id = "smpl-family"
+name = "SMPL family body models (SMPL, SMPL-X and related model files)"
+role = "body_model"
+upstream_url = "https://smpl.is.tue.mpg.de/"
+code_license = "LicenseRef-SMPL-Model-License"
+weights_license = "LicenseRef-SMPL-Model-License"
+training_data = "Not applicable (body model files)."
+restrictions = ["research_nc"]
+status = "research_only"
+allowed_in_core = false
+default_enabled = false
+plugin = "plugin-research-nc"
+verified_url = "https://smpl.is.tue.mpg.de/modellicense.html"
+verified_on = "2026-10-21"
+notes = "Licensed for non-commercial scientific research, non-commercial education and non-commercial artistic projects only; commercial licences are sold separately; no redistribution. SMPL files (.pkl, .npz) never enter any repository, core or plugin: each user registers and downloads them. Methods that need them (for example NLF-L) inherit research_nc."
+
+# ---------------------------------------------------------------------------------
+# Permissive candidates (perception-extra, P5) and evaluation tooling
+# ---------------------------------------------------------------------------------
+
+[[models]]
+id = "rtmw-l"
+name = "RTMW-l whole-body 2D pose via rtmlib"
+role = "pose_2d"
+upstream_url = "https://github.com/Tau-J/rtmlib"
+code_license = "Apache-2.0"
+weights_license = "NOASSERTION"
+training_data = "RTMW is trained jointly on 14 open datasets, among them the body7 collection behind rtmpose-halpe26, which includes datasets with research-only terms; their licences were not checked one by one."
+restrictions = ["research_nc"]
+status = "experimental"
+allowed_in_core = false
+default_enabled = false
+plugin = "perception-extra"
+verified_url = "https://github.com/Tau-J/rtmlib/blob/main/LICENSE"
+verified_on = "2026-10-21"
+notes = "pose2d stage of the 3D pipeline (plan 3.3); its host is settled when that stage is built. rtmlib runs ONNX models downloaded from download.openmmlab.com without mmcv, mmpose or mmdet. Same family and training data as rtmpose-halpe26, so its outputs carry research_nc as well. Experimental and off the public default path until the training-data licences are verified; meanwhile public-path foot points use the joints projected by SAM 3D Body itself."
+
+[[models]]
+id = "rtmpose-halpe26"
+name = "RTMPose Halpe-26 body and feet 2D pose (rtmpose-x 384x288 and rtmpose-m 256x192 ONNX, run through rtmlib)"
+role = "pose_2d"
+variants = ["rtmpose-x-halpe26-384x288", "rtmpose-m-halpe26-256x192"]
+upstream_url = "https://github.com/Tau-J/rtmlib"
+code_license = "Apache-2.0"
+weights_license = "NOASSERTION"
+training_data = "Trained on the body7 collection of public human-pose datasets (per mmpose's RTMPose project), which includes datasets with research-only terms; their licences were not checked one by one."
+restrictions = ["research_nc"]
+status = "experimental"
+allowed_in_core = true
+default_enabled = true
+plugin = "none"
+core_exception = "ADR 0001, amendment of 2026-10-21: M1 runs it in process from the core while its training data is unverified; every output of such a run carries research_nc."
+verified_url = "https://github.com/Tau-J/rtmlib/blob/main/LICENSE"
+verified_on = "2026-10-21"
+notes = "M1 pose stage. Runs in process through gbf.pose, which imports rtmlib lazily, when the optional dependency group pose (rtmlib, onnxruntime) is installed; uv sync installs that group by default, but it is not a dependency of the published package. python -m gbf highlights runs it by default (--pose-model x; m selects rtmpose-m, none skips the stage). Weights are fetched at run time by python -m gbf models fetch from download.openmmlab.com, with zip and extracted ONNX sha256 pinned in src/gbf/models.py, stored outside the repository and never redistributed. Every output of a run that uses it carries research_nc: the pipeline adds a copy of this entry's restrictions (kept equal to it by a test) to the run's, and a re-run with other tags rewrites every artifact. To be replaced before P5 by a model whose weights and training data are verified, or by one hosted in a plugin."
+
+[[models]]
+id = "rf-detr"
+name = "RF-DETR (Apache-2.0 sizes)"
+role = "detection"
+variants = ["N", "S", "M", "L"]
+upstream_url = "https://github.com/roboflow/rf-detr"
+code_license = "Apache-2.0"
+weights_license = "Apache-2.0"
+training_data = "COCO-pretrained checkpoints as published upstream (COCO image licensing not reviewed by this project). Never fine-tuned on DFL-derived data: the Roboflow football datasets are blocked in registries/data.toml."
+restrictions = []
+status = "planned"
+allowed_in_core = true
+default_enabled = false
+plugin = "perception-extra"
+verified_url = "https://github.com/roboflow/rf-detr/blob/develop/LICENSE"
+verified_on = "2026-10-21"
+notes = "P5 plan: the N and S COCO checkpoints detect person and sports ball directly; roles come from colour, off-pitch filtering and position. README figures: RF-DETR-S 32.1M parameters, COCO AP50:95 53.0 (the hardware of its latency table was not checked). The default is set by the P5 replacement gate (prereg/gates.v1.json)."
+
+[[models]]
+id = "rf-detr-plus"
+name = "RF-DETR variants under PML 1.0 (rfdetr_plus)"
+role = "detection"
+variants = ["Atto", "Femto", "Pico", "XL", "2XL"]
+upstream_url = "https://github.com/roboflow/rf-detr"
+code_license = "LicenseRef-PML-1.0"
+weights_license = "LicenseRef-PML-1.0"
+training_data = "Not reviewed (blocked by licence)."
+restrictions = []
+status = "blocked"
+allowed_in_core = false
+default_enabled = false
+plugin = "none"
+blocked_reason = "PML 1.0 is not an open-source licence; only the Apache-2.0 sizes N, S, M and L are used."
+verified_url = "https://github.com/roboflow/rf-detr"
+verified_on = "2026-10-21"
+notes = "Shipped as the rfdetr_plus package according to the upstream README."
+
+[[models]]
+id = "roboflow-trackers"
+name = "roboflow/trackers (SORT, ByteTrack, OC-SORT, BoT-SORT, C-BIoU, McByte)"
+role = "tracking"
+upstream_url = "https://github.com/roboflow/trackers"
+code_license = "Apache-2.0"
+weights_license = "NOT_APPLICABLE"
+training_data = "Not applicable: motion trackers; any appearance model they use is registered separately."
+restrictions = []
+status = "planned"
+allowed_in_core = true
+default_enabled = false
+plugin = "perception-extra"
+verified_url = "https://github.com/roboflow/trackers/blob/develop/LICENSE"
+verified_on = "2026-10-21"
+notes = "P5 tracker replacing the GPL-derived trackers bundled in tracklab. Upstream says every tracker was re-implemented from its paper without copying other code; it accepts supervision.Detections."
+
+[[models]]
+id = "siglip"
+name = "SigLIP image encoder (google/siglip-base-patch16-224)"
+role = "appearance_embedding"
+upstream_url = "https://huggingface.co/google/siglip-base-patch16-224"
+code_license = "NOT_APPLICABLE"
+weights_license = "Apache-2.0"
+training_data = "Not reviewed by this project."
+restrictions = []
+status = "planned"
+allowed_in_core = true
+default_enabled = false
+plugin = "perception-extra"
+verified_url = "https://huggingface.co/google/siglip-base-patch16-224"
+verified_on = "2026-10-21"
+notes = "Second opinion for team classification next to the default Lab colour features (P1b); tracks where the two disagree are flagged for manual review. 203,155,970 parameters (F32, text tower included). siglip2-base-patch16-224 is also Apache-2.0. Which feature becomes the default is decided by the pre-registered GSR comparison (gate G8)."
+
+[[models]]
+id = "parseq"
+name = "PARSeq scene-text recogniser"
+role = "jersey_ocr"
+upstream_url = "https://github.com/baudm/parseq"
+code_license = "Apache-2.0"
+weights_license = "NOASSERTION"
+training_data = "Licences of the datasets behind the pretrained weights not verified."
+restrictions = []
+status = "experimental"
+allowed_in_core = false
+default_enabled = false
+plugin = "perception-extra"
+verified_url = "https://github.com/baudm/parseq"
+verified_on = "2026-10-21"
+notes = "Preferred jersey-number recogniser for P5 once the training-data licences of its pretrained weights are checked (plan 8.3 and P5). Last commit 2024-04-24."
+
+[[models]]
+id = "easyocr"
+name = "EasyOCR"
+role = "jersey_ocr"
+upstream_url = "https://github.com/JaidedAI/EasyOCR"
+code_license = "Apache-2.0"
+weights_license = "NOASSERTION"
+training_data = "Not verified."
+dependencies = [
+  { name = "python-bidi", license = "LGPL-3.0-or-later", note = "Required dependency; the core allowlist rejects LGPL by default." },
+]
+restrictions = []
+status = "plugin_only"
+allowed_in_core = false
+default_enabled = false
+plugin = "perception-extra"
+verified_url = "https://github.com/JaidedAI/EasyOCR"
+verified_on = "2026-10-21"
+notes = "Optional fallback only, because of its LGPL dependency (appendix B E3). Last commit 2025-12-05."
+
+[[models]]
+id = "tvcalib"
+name = "TVCalib camera optimisation code (tvcalib/ only)"
+role = "calibration"
+upstream_url = "https://github.com/MM4SPA/tvcalib"
+code_license = "MIT"
+weights_license = "NOT_APPLICABLE"
+training_data = "Not applicable: only the line-based camera optimisation is used; the front end is our own pitch-keypoint model trained on synthetic renders."
+restrictions = []
+status = "planned"
+allowed_in_core = true
+default_enabled = false
+plugin = "perception-extra"
+verified_url = "https://github.com/MM4SPA/tvcalib/blob/main/LICENSE"
+verified_on = "2026-10-21"
+notes = "MIT (Copyright (c) 2022 MM4SPA): keep the notice when copying. Unmaintained since 2023-12. Its inference path imports an unlicensed segmentation submodule, which is blocked (tvcalib-segmentation)."
+
+[[models]]
+id = "pose2sim"
+name = "Pose2Sim multi-camera triangulation"
+role = "multiview_reference"
+upstream_url = "https://github.com/perfanalytics/pose2sim"
+code_license = "BSD-3-Clause"
+weights_license = "NOT_APPLICABLE"
+training_data = "Not applicable: triangulation and calibration tooling; any 2D pose model it runs must be registered separately before use."
+restrictions = []
+status = "planned"
+allowed_in_core = true
+default_enabled = false
+plugin = "none"
+verified_url = "https://github.com/perfanalytics/pose2sim"
+verified_on = "2026-10-21"
+notes = "Reference for self-recorded multi-camera footage, if the maintainer decides to film (plan section 10, item 5): at least 4 synchronised cameras, ChArUco calibration. It can only certify resolution and frame-rate degradation curves (ADR 0004). Evaluation tooling, not part of the analysis pipeline."
+
+# ---------------------------------------------------------------------------------
+# plugin-sngs (GPL-3.0): transitional perception, user-installed, out of process
+# ---------------------------------------------------------------------------------
+
+[[models]]
+id = "sn-gamestate"
+name = "sn-gamestate (SoccerNet game state reconstruction baseline)"
+role = "pipeline"
+upstream_url = "https://github.com/SoccerNet/sn-gamestate"
+code_license = "GPL-3.0-only"
+weights_license = "NOT_APPLICABLE"
+training_data = "Not applicable: each model it loads is registered separately."
+dependencies = [
+  { name = "tracklab 1.3.24", license = "MIT AND GPL-3.0-only", note = "See tracklab." },
+  { name = "prtreid", license = "LicenseRef-Hippocratic-3.0", note = "Default ReID." },
+  { name = "torchreid (bpbreid branch)", license = "LicenseRef-Hippocratic-3.0" },
+  { name = "mmocr 1.0.1", license = "Apache-2.0" },
+]
+restrictions = ["agpl_network_source", "hl3"]
+status = "plugin_only"
+allowed_in_core = false
+default_enabled = true
+plugin = "plugin-sngs"
+verified_url = "https://github.com/SoccerNet/sn-gamestate/blob/main/LICENSE"
+verified_on = "2026-10-21"
+notes = "Transitional perception (detection, ReID and roles, tracking, pitch keypoints, calibration, jersey numbers) until P5. Its licence chain is not clean: it bundles GPL-2.0-only NBJW/PnLCalib and unlicensed sn-calibration code and depends on HL3 packages, so never distribute a packaged image of it or put it in a public dataset. Upstream pins Python 3.9 and torch 1.13.1. Our GPL-3.0 patches (.iloc[0], weighted KMeans, calib_status/calib_age/rep_err export, reset()) are generated with git diff and hash-checked; the calibration export only touches sn_gamestate/calibration/nbjw_calib.py."
+
+[[models]]
+id = "tracklab"
+name = "TrackLab multi-object tracking framework"
+role = "framework"
+upstream_url = "https://github.com/TrackingLaboratory/tracklab"
+code_license = "MIT AND GPL-3.0-only"
+weights_license = "NOT_APPLICABLE"
+training_data = "Not applicable (framework)."
+dependencies = [
+  { name = "ultralytics", license = "AGPL-3.0-only", note = "Required dependency in its pyproject." },
+]
+restrictions = ["agpl_network_source"]
+status = "plugin_only"
+allowed_in_core = false
+default_enabled = true
+plugin = "plugin-sngs"
+verified_url = "https://github.com/TrackingLaboratory/tracklab/blob/main/LICENSE"
+verified_on = "2026-10-21"
+notes = "Labelled MIT, but the bundled trackers strong_sort, bpbreid_strong_sort, byte_track, oc_sort and deep_oc_sort credit code that was GPL-3.0 at the time (conservative reading: GPL-3.0 derivatives); bot_sort arrived in the same commit, provenance unchecked. Pinned at 1.3.24 and patched at run time by one module (plan 3.6 option b, replacing VideoReader.__getitem__); before each run assert that frame 0 equals ffmpeg's frame 0 pixel for pixel."
+
+[[models]]
+id = "ultralytics-yolo11"
+name = "Ultralytics YOLO11 (ultralytics package and weights)"
+role = "detection"
+upstream_url = "https://github.com/ultralytics/ultralytics"
+code_license = "AGPL-3.0-only"
+weights_license = "AGPL-3.0-only"
+training_data = "Not reviewed. The vendor states that all YOLO models, including ones you train or fine-tune, fall under AGPL-3.0 by default."
+restrictions = ["agpl_network_source"]
+status = "plugin_only"
+allowed_in_core = false
+default_enabled = true
+plugin = "plugin-sngs"
+verified_url = "https://www.ultralytics.com/license"
+verified_on = "2026-10-21"
+notes = "Default detector of sn-gamestate (yolo_ultralytics). It is also the source of M1's ball input: ball_raw.jsonl (per-frame COCO 'sports ball' candidates, docs/design/m1-highlights.md) comes from YOLO11m with its COCO-pretrained weights, run by a script outside this repository and outside plugin-sngs; no gbf plugin hosts it yet. The ball-receipt.json kept next to that file records the file's sha256 (not the script's or the weights'), declares AGPL-3.0-only and the tags agpl_network_source (this entry's) and no_share (the clip's): python -m gbf highlights refuses the input unless --allow-license accepts AGPL-3.0-only, and carries both tags into run.json. A ball file without that receipt adds only no_share and its licence goes unchecked, so the receipt has to travel with the file. Never run server side; static precomputed results may be published (AGPL-3.0 section 13). The vendor's reading is wider than the AGPL text (whole project, trained weights, and SaaS back ends need an Enterprise licence)."
+
+[[models]]
+id = "prtreid"
+name = "PRTReid (ReID, team and role multi-task model)"
+role = "reid"
+upstream_url = "https://github.com/VlSomers/prtreid"
+code_license = "LicenseRef-Hippocratic-3.0"
+weights_license = "LicenseRef-Hippocratic-3.0"
+training_data = "Not reviewed; the weights are treated as HL3 like the code."
+restrictions = ["hl3"]
+status = "plugin_only"
+allowed_in_core = false
+default_enabled = true
+plugin = "plugin-sngs"
+verified_url = "https://github.com/VlSomers/prtreid/blob/main/LICENSE"
+verified_on = "2026-10-21"
+notes = "Hippocratic License 3.0 (HL3-LAW-MEDIA-MIL-SOC-SV): use restrictions, third-party enforcement rights and termination on breach; the FSF lists the Hippocratic License as non-free, it does not meet the OSI definition, and it is GPL-incompatible. Clause 2.1 grants use and distribution; clause 5.3 is broad (both not re-checked), so public videos use the MIT colour team clustering instead. Default ReID of sn-gamestate."
+
+[[models]]
+id = "bpbreid"
+name = "BPBReID (installed as torchreid from the bpbreid branch)"
+role = "reid"
+upstream_url = "https://github.com/VlSomers/bpbreid"
+code_license = "LicenseRef-Hippocratic-3.0"
+weights_license = "LicenseRef-Hippocratic-3.0"
+training_data = "Not reviewed; the weights are treated as HL3 like the code."
+restrictions = ["hl3"]
+status = "plugin_only"
+allowed_in_core = false
+default_enabled = true
+plugin = "plugin-sngs"
+verified_url = "https://github.com/VlSomers/bpbreid/blob/main/LICENSE"
+verified_on = "2026-10-21"
+notes = "Pulled in by sn-gamestate, whose default tracker is bpbreid_strong_sort. Same licence handling as prtreid."
+
+[[models]]
+id = "mmocr"
+name = "MMOCR (OpenMMLab text recognition)"
+role = "jersey_ocr"
+upstream_url = "https://github.com/open-mmlab/mmocr"
+code_license = "Apache-2.0"
+weights_license = "NOASSERTION"
+training_data = "Not verified."
+restrictions = []
+status = "plugin_only"
+allowed_in_core = false
+default_enabled = true
+plugin = "plugin-sngs"
+verified_url = "https://github.com/open-mmlab/mmocr"
+verified_on = "2026-10-21"
+notes = "Default jersey OCR of sn-gamestate (pinned 1.0.1) and its most expensive stage on T4; switched off for the 720p GSR holdout runs (plan 5.2). The OpenMMLab detection and OCR stack is unmaintained (last mmocr commit 2024-11-27)."
+
+[[models]]
+id = "nbjw-calib"
+name = "No Bells Just Whistles (NBJW) pitch keypoints and calibration"
+role = "calibration"
+upstream_url = "https://github.com/mguti97/No-Bells-Just-Whistles"
+code_license = "GPL-2.0-only"
+weights_license = "NOASSERTION"
+training_data = "Pretrained on SoccerNet and fine-tuned on WC14/TSWC according to the research notes; dataset licences not reviewed."
+restrictions = []
+status = "plugin_only"
+allowed_in_core = false
+default_enabled = true
+plugin = "plugin-sngs"
+verified_url = "https://github.com/mguti97/No-Bells-Just-Whistles/blob/main/LICENSE"
+verified_on = "2026-10-21"
+notes = "The LICENSE says GPL version 2 without 'or any later version': incompatible with GPL-3.0 and Apache-2.0, so never combined with them into one distributed program. Default calibrator of sn-gamestate (copied into its plugins/calibration). Patches to plugins/calibration/nbjw_calib/utils/* are GPL-2.0-only and kept apart from GPL-3.0 patch files. In P5 it becomes the fallback plugin-nbjw: a separate process running the original repository (frames in, homography JSON out). Weights are GitHub release assets with no separately stated licence. Fresh runs use use_prev_homography=False (gate G6)."
+
+[[models]]
+id = "pnlcalib"
+name = "PnLCalib (point-and-line pitch calibration)"
+role = "calibration"
+upstream_url = "https://github.com/mguti97/PnLCalib"
+code_license = "GPL-2.0-only"
+weights_license = "NOASSERTION"
+training_data = "Not reviewed."
+restrictions = []
+status = "plugin_only"
+allowed_in_core = false
+default_enabled = false
+plugin = "plugin-sngs"
+verified_url = "https://github.com/mguti97/PnLCalib/blob/main/LICENSE"
+verified_on = "2026-10-21"
+notes = "Ships only the GPLv2 text with no version statement in its README or sources, so it is treated as GPL-2.0-only. Bundled in sn-gamestate as an alternative calibrator, not the default."
+
+# ---------------------------------------------------------------------------------
+# Blocked: ideas only, never code or weights
+# ---------------------------------------------------------------------------------
+
+[[models]]
+id = "tvcalib-segmentation"
+name = "TVCalib segmentation submodule (sn_segmentation) and checkpoint train_59.pt"
+role = "calibration"
+upstream_url = "https://github.com/MM4SPA/tvcalib"
+code_license = "NONE"
+weights_license = "NONE"
+training_data = "Not reviewed (blocked)."
+restrictions = []
+status = "blocked"
+allowed_in_core = false
+default_enabled = false
+plugin = "none"
+blocked_reason = "The submodule has no licence and sits on TVCalib's inference path; train_59.pt declares no licence (appendix B E4)."
+verified_url = "https://github.com/MM4SPA/tvcalib/blob/main/.gitmodules"
+verified_on = "2026-10-21"
+notes = "Replaced by our own pitch-keypoint model; plugin-nbjw is the fallback."
+
+[[models]]
+id = "sn-calibration"
+name = "SoccerNet sn-calibration baseline code"
+role = "calibration"
+upstream_url = "https://github.com/SoccerNet/sn-calibration"
+code_license = "NONE"
+weights_license = "NOASSERTION"
+training_data = "Not reviewed (blocked)."
+restrictions = []
+status = "blocked"
+allowed_in_core = false
+default_enabled = false
+plugin = "none"
+blocked_reason = "No licence in the repository or README (all rights reserved by default); its code may not be copied or adapted."
+verified_url = "https://github.com/SoccerNet/sn-calibration"
+verified_on = "2026-10-21"
+notes = "Copies of it sit inside sn-gamestate, NBJW and PnLCalib; we never copy or patch those parts. Ideas only."
+
+[[models]]
+id = "sn-tracking-code"
+name = "SoccerNet sn-tracking code"
+role = "tracking"
+upstream_url = "https://github.com/SoccerNet/sn-tracking"
+code_license = "NONE"
+weights_license = "NOASSERTION"
+training_data = "Not reviewed (blocked)."
+restrictions = []
+status = "blocked"
+allowed_in_core = false
+default_enabled = false
+plugin = "none"
+blocked_reason = "No licence in the repository or README; ideas only."
+verified_url = "https://github.com/SoccerNet/sn-tracking"
+verified_on = "2026-10-21"
+notes = "The SoccerNet-Tracking dataset is registered separately in registries/data.toml."
+
+[[models]]
+id = "sn-jersey"
+name = "SoccerNet sn-jersey"
+role = "jersey_ocr"
+upstream_url = "https://github.com/SoccerNet/sn-jersey"
+code_license = "NONE"
+weights_license = "NOASSERTION"
+training_data = "Not reviewed (blocked)."
+restrictions = []
+status = "blocked"
+allowed_in_core = false
+default_enabled = false
+plugin = "none"
+blocked_reason = "No licence declared; ideas only."
+verified_url = "https://github.com/SoccerNet/sn-jersey"
+verified_on = "2026-10-21"
+notes = "The repository holds only a README."
+
+[[models]]
+id = "deep-eiou"
+name = "Deep-EIoU sports tracker"
+role = "tracking"
+upstream_url = "https://github.com/hsiangwei0903/Deep-EIoU"
+code_license = "NONE"
+weights_license = "NOASSERTION"
+training_data = "Not reviewed (blocked)."
+restrictions = []
+status = "blocked"
+allowed_in_core = false
+default_enabled = false
+plugin = "none"
+blocked_reason = "No licence declared; ideas only."
+verified_url = "https://github.com/hsiangwei0903/Deep-EIoU"
+verified_on = "2026-10-21"
+notes = "Use roboflow/trackers instead."
+
+[[models]]
+id = "learning-from-the-pros"
+name = "Learning From the Pros (goalkeeper technique from broadcast video)"
+role = "technique_analysis"
+upstream_url = "https://github.com/mattwear21/learningfromthepros"
+code_license = "NONE"
+weights_license = "NOASSERTION"
+training_data = "Not reviewed (blocked)."
+restrictions = []
+status = "blocked"
+allowed_in_core = false
+default_enabled = false
+plugin = "none"
+blocked_reason = "No licence declared; ideas only."
+verified_url = "https://github.com/mattwear21/learningfromthepros"
+verified_on = "2026-10-21"
+notes = "Paper: arXiv 2202.12259."
+
+[[models]]
+id = "jersey-number-pipeline"
+name = "Koshkina et al. jersey-number pipeline"
+role = "jersey_ocr"
+upstream_url = "https://github.com/mkoshkina/jersey-number-pipeline"
+code_license = "CC-BY-NC-3.0"
+weights_license = "NOASSERTION"
+training_data = "Not reviewed (blocked)."
+restrictions = ["research_nc"]
+status = "blocked"
+allowed_in_core = false
+default_enabled = false
+plugin = "none"
+blocked_reason = "CC BY-NC 3.0 Unported (license.txt and README): non-commercial and not a software licence; ideas only."
+verified_url = "https://github.com/mkoshkina/jersey-number-pipeline"
+verified_on = "2026-10-21"
+notes = "Last commit 2024-10-07."
+
+[[models]]
+id = "deimv2"
+name = "DEIMv2 detector"
+role = "detection"
+upstream_url = "https://github.com/Intellindust-AI-Lab/DEIMv2"
+code_license = "LicenseRef-DEIMv2-NonCommercial"
+weights_license = "LicenseRef-DEIMv2-NonCommercial"
+training_data = "Not reviewed (blocked)."
+restrictions = ["research_nc"]
+status = "blocked"
+allowed_in_core = false
+default_enabled = false
+plugin = "none"
+blocked_reason = "On 2026-08-24 its licence changed from Apache-2.0 to a custom non-commercial licence ('No rights are granted for Commercial Use'); the plan takes ideas only."
+verified_url = "https://github.com/Intellindust-AI-Lab/DEIMv2/blob/main/LICENSE.md"
+verified_on = "2026-10-21"
+notes = "An example of why licences are pinned and recorded at adoption time."
+
+[[models]]
+id = "boxmot"
+name = "BoxMOT tracker collection"
+role = "tracking"
+upstream_url = "https://github.com/mikel-brostrom/boxmot"
+code_license = "AGPL-3.0-only"
+weights_license = "NOASSERTION"
+training_data = "Not reviewed (blocked)."
+restrictions = ["agpl_network_source"]
+status = "blocked"
+allowed_in_core = false
+default_enabled = false
+plugin = "none"
+blocked_reason = "AGPL-3.0 since 2023-05-12 (GPL-3.0 before); use roboflow/trackers or supervision's ByteTrack instead."
+verified_url = "https://github.com/mikel-brostrom/boxmot/blob/master/LICENSE"
+verified_on = "2026-10-21"
+notes = "Formerly yolov8_tracking / Yolov5_StrongSORT_OSNet, the source of tracklab's bundled trackers."
+
+[[models]]
+id = "roboflow-sports-example-weights"
+name = "roboflow/sports example weights (three ultralytics-trained .pt files)"
+role = "detection"
+upstream_url = "https://github.com/roboflow/sports"
+code_license = "MIT"
+weights_license = "AGPL-3.0-only"
+training_data = "Fine-tuned with ultralytics from yolov8x.pt on Roboflow Universe football datasets whose frames come from the DFL Kaggle competition (blocked in registries/data.toml)."
+restrictions = ["agpl_network_source"]
+status = "blocked"
+allowed_in_core = false
+default_enabled = false
+plugin = "none"
+blocked_reason = "Trained with ultralytics, hence AGPL-3.0 by the vendor's reading, and trained on competition-use-only DFL frames."
+verified_url = "https://github.com/roboflow/sports/blob/main/examples/soccer/notebooks/train_player_detector.ipynb"
+verified_on = "2026-10-21"
+notes = "The roboflow/sports package itself is MIT (Copyright (c) 2024 Roboflow) and its ViewTransformer may be reused with the notice; only its soccer examples and these weights depend on ultralytics."

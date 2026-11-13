@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:gbf:schema:plugin-receipt",
+  "title": "Plugin receipt (plugin-receipt.json)",
+  "description": "What a plugin writes next to job.json (urn:gbf:schema:job) when it finishes (ADR 0001 section 3, plan 3.1): which plugin ran (name, version, SPDX licence expression, source commit, weight hashes), on which job (job_sha256, the sha256 of the job.json bytes it read), what it wrote (every output with relpath, format, sha256 and size), which canonical frames it decoded (pixel hashes, gate G5), its run environment and the restrictions its outputs carry. The core re-hashes every output and checks the licence against its allowlist before accepting anything (gbf.plugins.protocol.accept_outputs). Paths are relative to the job directory; absolute paths are rejected.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "job_sha256",
+    "status",
+    "plugin",
+    "outputs",
+    "decoded_frames",
+    "environment",
+    "restrictions"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "job_sha256": {
+      "description": "sha256 of the raw bytes of the job.json the plugin read.",
+      "$ref": "urn:gbf:schema:common#/$defs/sha256"
+    },
+    "status": {
+      "description": "'ok' when every requested output was written; the core accepts nothing else.",
+      "enum": ["ok", "failed"]
+    },
+    "plugin": {
+      "type": "object",
+      "required": ["name", "version", "license", "commit", "weights"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+        "version": {"type": "string", "minLength": 1, "maxLength": 64},
+        "license": {
+          "description": "SPDX licence expression of the plugin code, e.g. MIT or GPL-3.0-only.",
+          "$ref": "urn:gbf:schema:common#/$defs/spdx"
+        },
+        "commit": {
+          "description": "Source revision of the plugin code, or null when it does not run from a git checkout.",
+          "anyOf": [{"$ref": "urn:gbf:schema:common#/$defs/git_sha1"}, {"type": "null"}]
+        },
+        "weights": {
+          "description": "Every model weight file the plugin loaded.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "sha256"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "sha256": {"$ref": "urn:gbf:schema:common#/$defs/sha256"},
+              "license": {"$ref": "urn:gbf:schema:common#/$defs/spdx"}
+            }
+          }
+        }
+      }
+    },
+    "outputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "relpath", "format", "sha256", "bytes"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"},
+          "relpath": {
+            "allOf": [
+              {"$ref": "urn:gbf:schema:common#/$defs/relpath"},
+              {"pattern": "^out/[^/]"}
+            ]
+          },
+          "format": {"type": "string", "minLength": 1},
+          "sha256": {"$ref": "urn:gbf:schema:common#/$defs/sha256"},
+          "bytes": {"$ref": "urn:gbf:schema:common#/$defs/nonneg_int"}
+        }
+      }
+    },
+    "decoded_frames": {
+      "description": "Pixel hashes of the canonical frames the plugin decoded (same definition as job frames.pixel_sha256); empty when it decodes no video.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["frame_index", "sha256"],
+        "additionalProperties": false,
+        "properties": {
+          "frame_index": {"$ref": "urn:gbf:schema:common#/$defs/nonneg_int"},
+          "sha256": {"$ref": "urn:gbf:schema:common#/$defs/sha256"}
+        }
+      }
+    },
+    "environment": {
+      "description": "Versions of the interpreter, libraries and tools the plugin ran with, e.g. {\"python\": \"3.12.13\", \"pyarrow\": \"26.0.0\"}.",
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"type": "string", "minLength": 1}
+    },
+    "restrictions": {"$ref": "urn:gbf:schema:restrictions#/$defs/restrictions"},
+    "messages": {
+      "description": "Free-text notes from the plugin (warnings, skipped frames); never paths.",
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  }
+}

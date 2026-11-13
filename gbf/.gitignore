@@ -1,0 +1,168 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# Project-local toolchains and caches (uv cache, project-local CPython)
+.local/
+
+# Run outputs and data are never committed (ADR 0002). Receipts for public
+# data live in receipts/public/; everything private lives under DATA_ROOT.
+runs/
+data/
+cache/
+# Logs of runs and tools (they quote frames, tracks and paths of the material they ran on)
+*.log
+
+# Restricted material (ADR 0002 section 4): NDA case files, manual labels, plugin job
+# directories (<task>-<16 hex digits>), identity overrides and raw plugin outputs, also
+# renamed or copied (identity_overrides (1).json, Copy of detections.jsonl,
+# ball_raw2.jsonl). The directories hide everything below them, at any depth. Names that
+# contain identity_override, detections or ball_raw (- and _ alike) are hidden with a
+# data suffix (.json; .json[5cl]: .jsonl, .json5, .jsonc; .[nl]djson: .ndjson, .ldjson;
+# .geojson; .[ct]sv: .csv, .tsv; YAML, TOML, text and XML; the arrays and tables
+# .np[yz], .parquet, .feather, .arrow, .h5, .hdf5), as compressed copies (.gz, .zst,
+# .bz2, .xz) and as backups (.bak, .orig, .old, .backup, .tmp, .save, ~); the other
+# names with the suffixes they are written with. No pattern ends like code or
+# documentation (.py, .pyi, .md, .rst), so identity_overrides.py and detections.md stay
+# visible without a negation: a negation would also re-include what a developer
+# excluded in .git/info/exclude or a global excludes file, since .gitignore takes
+# precedence over both. The gate's restricted_data check (G4) fails on these names when
+# they are force-added, and on what these patterns leave visible to git add -A
+# (src/gbf/gate/datafiles.py): identity_override, detections and ball_raw names with any
+# other suffix except code and documentation, such as a figure (detections-overview.svg),
+# a spreadsheet or database (.xlsx, .sqlite), an archive or another compressor (.zip,
+# .7z, .br), a numbered or partial copy (.jsonl.1, .part), an editor or lock file (.swp,
+# .~lock.*#) or a name without a suffix, and hand labels under another JSON name, which
+# it recognises by their content. A directory named like such material with a backup
+# suffix (detections.old/) is hidden with everything below it, code and docs included.
+cases/
+labels/
+label/
+manual[-_]label/
+manual[-_]labels*/
+*-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]/
+*identity[-_]override*.json
+*identity[-_]override*.json[5cl]
+*identity[-_]override*.[nl]djson
+*identity[-_]override*.geojson
+*identity[-_]override*.[ct]sv
+*identity[-_]override*.yaml
+*identity[-_]override*.yml
+*identity[-_]override*.toml
+*identity[-_]override*.txt
+*identity[-_]override*.xml
+*identity[-_]override*.np[yz]
+*identity[-_]override*.parquet
+*identity[-_]override*.feather
+*identity[-_]override*.arrow
+*identity[-_]override*.h5
+*identity[-_]override*.hdf5
+*identity[-_]override*.gz
+*identity[-_]override*.zst
+*identity[-_]override*.bz2
+*identity[-_]override*.xz
+*identity[-_]override*.bak
+*identity[-_]override*.orig
+*identity[-_]override*.old
+*identity[-_]override*.backup
+*identity[-_]override*.tmp
+*identity[-_]override*.save
+*identity[-_]override*~
+*detections*.json
+*detections*.json[5cl]
+*detections*.[nl]djson
+*detections*.geojson
+*detections*.[ct]sv
+*detections*.yaml
+*detections*.yml
+*detections*.toml
+*detections*.txt
+*detections*.xml
+*detections*.np[yz]
+*detections*.parquet
+*detections*.feather
+*detections*.arrow
+*detections*.h5
+*detections*.hdf5
+*detections*.gz
+*detections*.zst
+*detections*.bz2
+*detections*.xz
+*detections*.bak
+*detections*.orig
+*detections*.old
+*detections*.backup
+*detections*.tmp
+*detections*.save
+*detections*~
+*ball[-_]raw*.json
+*ball[-_]raw*.json[5cl]
+*ball[-_]raw*.[nl]djson
+*ball[-_]raw*.geojson
+*ball[-_]raw*.[ct]sv
+*ball[-_]raw*.yaml
+*ball[-_]raw*.yml
+*ball[-_]raw*.toml
+*ball[-_]raw*.txt
+*ball[-_]raw*.xml
+*ball[-_]raw*.np[yz]
+*ball[-_]raw*.parquet
+*ball[-_]raw*.feather
+*ball[-_]raw*.arrow
+*ball[-_]raw*.h5
+*ball[-_]raw*.hdf5
+*ball[-_]raw*.gz
+*ball[-_]raw*.zst
+*ball[-_]raw*.bz2
+*ball[-_]raw*.xz
+*ball[-_]raw*.bak
+*ball[-_]raw*.orig
+*ball[-_]raw*.old
+*ball[-_]raw*.backup
+*ball[-_]raw*.tmp
+*ball[-_]raw*.save
+*ball[-_]raw*~
+manual[-_]*.json
+manual[-_]*.jsonl
+manual[-_]*.[nl]djson
+calib*.jsonl
+calib*.[nl]djson
+keypoints*.jsonl
+keypoints*.[nl]djson
+*plugin[-_]receipt*.json
+*keypoints[-_]receipt*.json
+*ball[-_]receipt*.json
+# The one negation: the plugin receipt's JSON Schema stays visible; the gate's name rules
+# skip the schemas in src/gbf/contracts/schemas/. It names that one tracked file, so a
+# schema that you exclude yourself stays excluded, and a new schema there that is named
+# like restricted material, a later version of this one included, needs a negation of
+# its own.
+!/src/gbf/contracts/schemas/plugin-receipt.schema.json
+
+# Media, model weights and serialized objects. A file that must be tracked
+# (e.g. a golden frame) is force-added and has to be registered in
+# registries/media.toml; the gate rejects unregistered ones.
+*.mp4
+*.mkv
+*.mov
+*.avi
+*.webm
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.safetensors
+*.pkl
+*.pklz
+*.pickle
+
+# Secrets
+.env
+.env.*
+kaggle.json

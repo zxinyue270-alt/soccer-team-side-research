@@ -1,0 +1,11 @@
+{
+  "description": "Registries the gate requires (plan P0: registries/{models,data,media,metrics,tools}). Each registries/<kind>.toml must validate against urn:gbf:schema:registry_<kind>; python -m gbf gate reports a missing one.",
+  "required": [
+    "data",
+    "media",
+    "metrics",
+    "models",
+    "tools"
+  ],
+  "schema_version": 1
+}

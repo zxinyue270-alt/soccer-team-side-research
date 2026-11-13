@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:gbf:schema:common",
+  "title": "Shared definitions",
+  "description": "Building blocks referenced by the other gbf schemas.",
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "git_sha1": {
+      "description": "Git object id (commit or blob).",
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "rational": {
+      "description": "Exact frame rate as numerator/denominator, e.g. 25/1 or 30000/1001.",
+      "type": "string",
+      "pattern": "^[1-9][0-9]*/[1-9][0-9]*$"
+    },
+    "relpath": {
+      "description": "POSIX path relative to the repository root or to DATA_ROOT. Absolute paths, drive letters, backslashes and '..' segments are rejected so receipts never leak local paths.",
+      "type": "string",
+      "minLength": 1,
+      "not": {
+        "anyOf": [
+          {"pattern": "^/"},
+          {"pattern": "^[A-Za-z]:"},
+          {"pattern": "[\\\\]"},
+          {"pattern": "(^|/)\\.\\.(/|$)"}
+        ]
+      }
+    },
+    "date": {
+      "type": "string",
+      "format": "date"
+    },
+    "spdx": {
+      "description": "SPDX license expression, or LicenseRef-* for non-SPDX terms.",
+      "type": "string",
+      "minLength": 1
+    },
+    "nonneg_int": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

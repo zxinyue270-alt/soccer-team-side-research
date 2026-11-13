@@ -1,0 +1,165 @@
+{
+  "protocol": "prereg/eval-gsr-dev-v1.md",
+  "root": "$DATA_ROOT/private/gsr-v1-dev/<SEQ>",
+  "gbf_commit": "c2097d7664768a1a8d592173832f408ef03b927d",
+  "gbf_tree": "clean",
+  "sn_trackeval": "0.4.0",
+  "files": {
+    "labels": "source/{seq}/Labels-GameState.json",
+    "video": "{seq}-30s.mp4",
+    "refine_tracks": "runs/gbf-750-openvino-safe/refine/tracks.parquet",
+    "import_tracks": "runs/gbf-750-openvino-safe/import/tracks.parquet",
+    "refine_calib": "runs/gbf-750-openvino-safe/refine/calib.parquet",
+    "kinematics": "runs/gbf-750-openvino-safe/kinematics.parquet",
+    "measurements": "runs/gbf-750-openvino-safe/measurements.jsonl",
+    "run_json": "runs/gbf-750-openvino-safe/run.json"
+  },
+  "clips": {
+    "SNGS-083": {
+      "sha256": {
+        "labels": "e3505b97126b4c380974d267f0c35b8ef740a7ba3188fa02dfcbd01585f0e340",
+        "video": "1c51809cb0df42144465fb5541f4b94b975cc0eaca0112958bed59023459cc8e",
+        "refine_tracks": "9b246b84a828e5182fe3519711ea154fdfc6a0237dfe1c06e38a9fe2e7f278eb",
+        "import_tracks": "8778a4d07558cb5f3e2a3101535f9a892502a532e4422d7ff8a16ffcb34a9769",
+        "refine_calib": "a7f3a94c6fcd571d85cbf1d4f4e7af1d74e14390887c7e58d5632b7c2e8a92a3",
+        "kinematics": "b42a89872c2277f7b37261f090373243505a160e19efc29e43aed7869b7d1293",
+        "measurements": "4a53b08f1e07ebd7e8d0dd9872caf37d5327126d751b7ed7365ba63514509a63",
+        "run_json": "fce537768fdbed0c63ef77c08f8e5f0df338d30fca994a8801cef45da60d1292"
+      },
+      "prediction_counts": {
+        "rows": 9506,
+        "track_ids": 89,
+        "roles": [
+          "goalkeeper",
+          "player",
+          "referee"
+        ],
+        "pitch_usable_frames": 646,
+        "kinematics_rows": 8721,
+        "kinematics_valid_rows": 6000
+      }
+    },
+    "SNGS-023": {
+      "sha256": {
+        "labels": "310d5b089a0c57938d278ca2e2187eb99170eec1267af36069a1d84ae2759332",
+        "video": "1e2ba5f0df7ace76bf91d57cead17419b2345b7f084f1180df11e3f60988ada7",
+        "refine_tracks": "b703a0ffb4d45a9a00cc6b8373d9280d1c4dbb7fe1940448083a86a5d6487457",
+        "import_tracks": "52823596220df5549d80a5ea35ef6a4d914918b9f02c4dc97ce42ce5ee241788",
+        "refine_calib": "8b69832dc7de16606efeb48b9516c16b895c934458dce992f27d235d252732fd",
+        "kinematics": "05b5f55997f0ff5b7df20ac49b184aaa2cbc0584984afe52cfa58bd37b414568",
+        "measurements": "5904f99d79e4bb01c053c6c15c31576eb8d67f4413c6121433f134eec1fa60aa",
+        "run_json": "de57038581d24012526197e8bf6a73320d1876214af1d31eee91d7e0b8a2244a"
+      },
+      "prediction_counts": {
+        "rows": 12063,
+        "track_ids": 69,
+        "roles": [
+          "goalkeeper",
+          "player",
+          "referee"
+        ],
+        "pitch_usable_frames": 634,
+        "kinematics_rows": 10563,
+        "kinematics_valid_rows": 5811
+      }
+    },
+    "SNGS-043": {
+      "sha256": {
+        "labels": "60c8ec0bd847663f898fb8d34eeaa8a6619ebd1eecbe5656146e82d7e7136cda",
+        "video": "d03b641fc8c50bb0b26ac948297a369ad81cb1215329ffa13f91b63e87e82239",
+        "refine_tracks": "8c7f5650f49905799f861800aa2e3ce91d59a471924bbd3645694be50ec7c0c9",
+        "import_tracks": "1009f6a0c3352ec9537a60434247fb15f992a165f9826b7dcd2b7f3f49c13369",
+        "refine_calib": "6fd02f84204d2dcd61251e6576e27ba4d72607464e3c79bd3b3cfc92c9dc98d2",
+        "kinematics": "9976716fc11b3ff38f1d0fd4f81ea1343ff8025f66a4f04415fc7ced5d82e88d",
+        "measurements": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "run_json": "26ecbdf20f60abca2520d693e406df262303a52054cc04c81c58172d74579f07"
+      },
+      "prediction_counts": {
+        "rows": 7739,
+        "track_ids": 158,
+        "roles": [
+          "goalkeeper",
+          "other",
+          "player",
+          "referee"
+        ],
+        "pitch_usable_frames": 744,
+        "kinematics_rows": 8826,
+        "kinematics_valid_rows": 3597
+      }
+    },
+    "SNGS-082": {
+      "sha256": {
+        "labels": "5c804d51a4cdce86b9bd38e4c3a73d3db024f207a451de204ec6523a03286bef",
+        "video": "582fcbf06979a332e5ece38c83fbf42dd0e492328b1a8380d27abba5748ce135",
+        "refine_tracks": "8e92602619ff8024dccbd4685a5b5e4378c2efb2b73bb5857c7933255be1ca6d",
+        "import_tracks": "04d5fd36d8269620684701ac3ae723f45af477705cf9a540c718919f4ba785e2",
+        "refine_calib": "35e35e92c87a0aa70c9aa20592ba236c6457bace3d5639727d3197c9944f51ec",
+        "kinematics": "d8babfe572b4b19b2b1bc2a0eadc1ec1b8f18c75fa90f2174b960937db21ed86",
+        "measurements": "7fa38684b4000a6b9b4f8e5fba30427bacda0a59875a1b4356e0d4cdf5e7c527",
+        "run_json": "05b9c0e4660df864876052ebcf9d27d7960978f907db00ae84c207e494bb897b"
+      },
+      "prediction_counts": {
+        "rows": 11519,
+        "track_ids": 111,
+        "roles": [
+          "goalkeeper",
+          "player",
+          "referee"
+        ],
+        "pitch_usable_frames": 747,
+        "kinematics_rows": 11976,
+        "kinematics_valid_rows": 8624
+      }
+    },
+    "SNGS-058": {
+      "sha256": {
+        "labels": "017ca49ba9ba0c401cad2b2919bc9bace75891b3933ea70d9d864cf56768a9d1",
+        "video": "9c703f3293f9633ba8a9222a6cbc65b1586840e166a7731d3be32e93a2214cf1",
+        "refine_tracks": "fe7728596b5be9bb0caca90f1ed6316a714b86c39465c146ccc4b5368dc91fc1",
+        "import_tracks": "fc59289e1320552b215cb55e9a7c8850175394d2cce4111d452a82473f0e8ac6",
+        "refine_calib": "aa900dde4aef9544cc27f29ebc6c1ff1a1ee48a6ebacc7ddc7c927d00f3bec4c",
+        "kinematics": "206aeed9ad2b27fbdda8f197e90fa55efd191e85a5fcb49c0e024a4ed624e470",
+        "measurements": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "run_json": "6060d5ded59f1ec8c3909123e345fbd53aeb4a45f7a95758a3900619e62d20ea"
+      },
+      "prediction_counts": {
+        "rows": 8146,
+        "track_ids": 140,
+        "roles": [
+          "goalkeeper",
+          "player",
+          "referee"
+        ],
+        "pitch_usable_frames": 0,
+        "kinematics_rows": 0,
+        "kinematics_valid_rows": 0
+      }
+    },
+    "SNGS-088": {
+      "sha256": {
+        "labels": "af2644b0e566a4ef4f20fec8d6124ff86d9db9f0b8d8208473e9983a732710c4",
+        "video": "d0c2ce5197c77724e381a90071968d9b07cfb541661bcfd99f9f02d471b431d4",
+        "refine_tracks": "e99e8d74a7b9027cb71fcdf73c42edf950914d57ccfb50327eec8679c2429999",
+        "import_tracks": "97fd1d131ca324cfaaa23603b9fd498856517d9ee9dd230fc7e64946900c8700",
+        "refine_calib": "e77e40436de59df90350913a60218d76e1c82805d73c8c7bd379fb9e984ac0ef",
+        "kinematics": "9fad57a8558a14656594a751743bfe23c7b825ada33674ff7699f94b62f029df",
+        "measurements": "0a75d89e0ebe633b596183ef7e3ea3f070d04ac076321812696fdb24876cbea8",
+        "run_json": "91db0c1d14bf3be8ce41001f1f7d8fb51e1829899da47f82895f4e3c8ee8be13"
+      },
+      "prediction_counts": {
+        "rows": 11966,
+        "track_ids": 109,
+        "roles": [
+          "goalkeeper",
+          "other",
+          "player",
+          "referee"
+        ],
+        "pitch_usable_frames": 747,
+        "kinematics_rows": 12495,
+        "kinematics_valid_rows": 9123
+      }
+    }
+  }
+}

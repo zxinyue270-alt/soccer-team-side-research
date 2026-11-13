@@ -1,0 +1,239 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:gbf:schema:measurement",
+  "title": "Evidence record (one line of measurements.jsonl)",
+  "description": "One number measured inside a highlight, or the honest statement that it is unavailable (ADR 0004, docs/design/m1-highlights.md). evidenceId is the sha256 of the canonical JSON (sorted keys, compact separators, UTF-8, no NaN) of the record without evidenceId, so any change to a record changes its id. Speeds are stored in m/s (km/h only in display); pitch quantities are SoccerNet metres measured only on pitch-usable frames (gate G6); image-plane quantities carry plane 'image' and are never converted to metres. A missing value is status 'unavailable' with value null and a reasonCode, never zero. C-tier metrics are never written: the tier enum leaves C out on purpose. error.kind is 'unmeasured' unless a receipt measured the metric's error.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "evidenceId",
+    "metric_id",
+    "label_zh",
+    "tier",
+    "tier_source",
+    "claimType",
+    "status",
+    "value",
+    "unit",
+    "display",
+    "frame",
+    "frames",
+    "highlight_id",
+    "track_id",
+    "track_ids",
+    "plane",
+    "quality",
+    "error",
+    "coverage",
+    "method",
+    "restrictions",
+    "source"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "evidenceId": {
+      "description": "sha256 of the canonical JSON of this record without the evidenceId key.",
+      "$ref": "urn:gbf:schema:common#/$defs/sha256"
+    },
+    "metric_id": {
+      "description": "Metric id: the id in registries/metrics.toml when the metric is listed there, otherwise a gbf.measure id.",
+      "type": "string",
+      "pattern": "^[a-z0-9]+([.-][a-z0-9]+)*$"
+    },
+    "label_zh": {"type": "string", "minLength": 1},
+    "tier": {
+      "description": "From registries/metrics.toml when the metric is listed (tier_source 'registry'); otherwise 'B' (experimental) or 'image_plane' (an image measurement, not a body or pitch quantity), set explicitly (tier_source 'explicit'). C is blocked and never written.",
+      "enum": ["official", "A", "A_candidate", "B", "image_plane"]
+    },
+    "tier_source": {"enum": ["registry", "explicit"]},
+    "claimType": {
+      "description": "measurement: computed from tracking and calibration; estimate: a model-based or heuristic estimate (3D height-prior skeleton, contact frame); image_measurement: measured in the image plane; provider_model / official_fact: a provider's value.",
+      "enum": ["measurement", "estimate", "image_measurement", "provider_model", "official_fact"]
+    },
+    "status": {"enum": ["ok", "unavailable"]},
+    "value": {
+      "description": "The value in storage units (unit), or null when unavailable.",
+      "type": ["number", "integer", "boolean", "null"]
+    },
+    "unit": {
+      "description": "m/s (speeds; km/h only on screen), m, deg, count, frame (a canonical frame index), box_h (image distance in box heights of the players involved), bh/s (image speed in box heights per second at the ball's own scale), or empty.",
+      "enum": ["m/s", "m", "deg", "count", "frame", "box_h", "bh/s", ""]
+    },
+    "display": {
+      "description": "Display text (km/h for speeds, mm:ss.cc times), or an em dash when unavailable.",
+      "type": "string",
+      "minLength": 1
+    },
+    "decimals": {"type": "integer", "minimum": 0, "maximum": 6},
+    "reasonCode": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+    "reason_zh": {"type": "string", "minLength": 1},
+    "frame": {
+      "description": "Canonical frame the value refers to (the key, contact or peak frame); null when no frame applies.",
+      "anyOf": [{"$ref": "urn:gbf:schema:common#/$defs/nonneg_int"}, {"type": "null"}]
+    },
+    "frames": {
+      "description": "Canonical frames whose data entered the value (or were examined, when unavailable), sorted.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "urn:gbf:schema:common#/$defs/nonneg_int"}
+    },
+    "highlight_id": {
+      "anyOf": [
+        {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"},
+        {"type": "null"}
+      ]
+    },
+    "track_id": {
+      "description": "The player the value belongs to (tracks.parquet track_id), or null.",
+      "anyOf": [{"$ref": "urn:gbf:schema:common#/$defs/nonneg_int"}, {"type": "null"}]
+    },
+    "track_ids": {
+      "description": "Every track whose data entered the value (the subject first).",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "urn:gbf:schema:common#/$defs/nonneg_int"}
+    },
+    "plane": {
+      "description": "pitch: SoccerNet metres or the calibrated 3D layer; image: measured in the image plane.",
+      "enum": ["pitch", "image"]
+    },
+    "quality": {
+      "description": "Flat evidence about how good the value is (sample counts, spreads, gates, box heights). Values are numbers, strings, booleans, null or flat arrays of them.",
+      "type": "object",
+      "additionalProperties": {
+        "anyOf": [
+          {"type": ["number", "integer", "string", "boolean", "null"]},
+          {"type": "array", "items": {"type": ["number", "integer", "string", "boolean", "null"]}}
+        ]
+      }
+    },
+    "error": {
+      "description": "ADR 0004 section 3. measured needs a receiptId; unmeasured carries no numbers.",
+      "type": "object",
+      "required": ["kind", "value", "ci95", "dataset", "conditions", "receiptId"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"enum": ["measured", "literature", "inferred", "unmeasured"]},
+        "value": {"type": ["number", "null"]},
+        "ci95": {
+          "anyOf": [
+            {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "number"}},
+            {"type": "null"}
+          ]
+        },
+        "dataset": {"type": ["string", "null"]},
+        "conditions": {"type": ["string", "null"]},
+        "receiptId": {"type": ["string", "null"]}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"kind": {"const": "measured"}}},
+          "then": {"properties": {"receiptId": {"type": "string", "minLength": 1}}}
+        },
+        {
+          "if": {"properties": {"kind": {"const": "unmeasured"}}},
+          "then": {
+            "properties": {
+              "value": {"type": "null"},
+              "ci95": {"type": "null"},
+              "receiptId": {"type": "null"}
+            }
+          }
+        }
+      ]
+    },
+    "coverage": {
+      "description": "How much of the highlight window the value is based on (ADR 0004: A tier always with coverage).",
+      "type": "object",
+      "required": ["window", "frames_considered", "frames_used", "share"],
+      "additionalProperties": false,
+      "properties": {
+        "window": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {"$ref": "urn:gbf:schema:common#/$defs/nonneg_int"}
+        },
+        "frames_considered": {"$ref": "urn:gbf:schema:common#/$defs/nonneg_int"},
+        "frames_used": {"$ref": "urn:gbf:schema:common#/$defs/nonneg_int"},
+        "share": {"anyOf": [{"type": "number", "minimum": 0, "maximum": 1}, {"type": "null"}]}
+      }
+    },
+    "method": {
+      "type": "object",
+      "required": ["id", "summary", "parameters", "code"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z][a-z0-9_.]*$"},
+        "summary": {"type": "string", "minLength": 1},
+        "parameters": {"type": "object"},
+        "code": {
+          "type": "object",
+          "required": ["gbf_version", "git_commit", "git_dirty"],
+          "additionalProperties": false,
+          "properties": {
+            "gbf_version": {"type": "string", "minLength": 1},
+            "git_commit": {
+              "anyOf": [{"$ref": "urn:gbf:schema:common#/$defs/git_sha1"}, {"const": "unknown"}]
+            },
+            "git_dirty": {"type": "boolean"}
+          }
+        }
+      }
+    },
+    "restrictions": {"$ref": "urn:gbf:schema:restrictions#/$defs/restrictions"},
+    "source": {
+      "description": "The canonical video and the run artifacts the record was computed from, by sha256 (names only, never paths).",
+      "type": "object",
+      "required": ["video_sha256", "fps", "inputs"],
+      "additionalProperties": false,
+      "properties": {
+        "video_sha256": {"$ref": "urn:gbf:schema:common#/$defs/sha256"},
+        "fps": {"$ref": "urn:gbf:schema:common#/$defs/rational"},
+        "inputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "sha256"],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "not": {"anyOf": [{"pattern": "^/"}, {"pattern": "^[A-Za-z]:"}, {"pattern": "[\\\\]"}]}
+              },
+              "sha256": {"$ref": "urn:gbf:schema:common#/$defs/sha256"}
+            }
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "ok"}}},
+      "then": {
+        "properties": {
+          "value": {"type": ["number", "integer", "boolean"]},
+          "reasonCode": false
+        }
+      }
+    },
+    {
+      "if": {"properties": {"status": {"const": "unavailable"}}},
+      "then": {
+        "required": ["reasonCode", "reason_zh"],
+        "properties": {"value": {"type": "null"}, "display": {"const": "—"}}
+      }
+    },
+    {
+      "if": {"properties": {"tier": {"const": "image_plane"}}},
+      "then": {"properties": {"plane": {"const": "image"}}}
+    },
+    {
+      "if": {"properties": {"tier_source": {"const": "explicit"}}},
+      "then": {"properties": {"tier": {"enum": ["B", "image_plane"]}}}
+    }
+  ]
+}

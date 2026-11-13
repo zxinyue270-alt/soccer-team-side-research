@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "id": "gates.v1",
+  "status": "frozen",
+  "frozen": true,
+  "freeze_protocol": [
+    "A maintainer reviews every value listed in requires_signoff and edits it if needed.",
+    "Set status to \"frozen\" and frozen to true, commit, and push to the project remote before any input listed in blinded_until_frozen is processed. The server-side push time is the pre-registration time; a local commit date is not.",
+    "After freezing, values change only through a new file (gates.v2.json) with a reason; results computed under v1 keep citing v1."
+  ],
+  "requires_signoff": [
+    "coverage_decision.threshold_80px",
+    "coverage_decision.threshold_150px",
+    "bbox_height_bins_px",
+    "team_clustering.private_clip_regression",
+    "gsr_evaluation.split",
+    "frame_identity.cross_environment",
+    "p5_replacement"
+  ],
+  "blinded_until_frozen": [
+    "Main-camera share of the 29 shot times of StatsBomb match 3754079 (SN-Labels Labels-cameras.json).",
+    "Any run on the GSR holdout clips.",
+    "Box-height distributions measured on the private development clip by the archive importer."
+  ],
+  "coverage_decision": {
+    "purpose": "Decide whether 3D calibration of technique metrics can stay on the 720p demo match or must move to WorldPose and/or self-recorded multi-camera footage.",
+    "unit": "event protagonist: the player nearest the event location at the event frame. On GSR (no events, no ball) the proxy is the player nearest the image centre, and receipts must say so.",
+    "formula": "coverage(h) = P(event frame is main camera) * P(protagonist box height >= h px at 720p and calibration fresh | main camera)",
+    "first_factor_source": "SN-Labels Labels-cameras.json of the demo match. Main camera = the classes 'Main camera center', 'Main camera left' and 'Main camera right', live segments only: segments flagged as replay are excluded and a missing replay flag counts as not main. The 29 StatsBomb shot times are mapped to video time with gbf.events.align.statsbomb_video_times using the per-half offsets of runs/align-3754079/align.json.",
+    "second_factor_source": "GSR dev clips downscaled to 1280x720 and run through plugin-sngs with use_prev_homography=False; replaced by a detector-only measurement on the 29 shot windows once the NDA video is available.",
+    "threshold_80px": {
+      "proposed": 0.3,
+      "rule": "If coverage(80) < 0.30, i.e. fewer than about 9 of the 29 shots are usable, the demo match keeps only body-internal angles from replay close-ups, and A-candidate 3D metrics are calibrated on WorldPose or self-recorded footage."
+    },
+    "threshold_150px": {
+      "proposed": 0.1,
+      "rule": "If coverage(150) < 0.10, B-tier joint-angle snapshots are not attempted on the demo match at all."
+    }
+  },
+  "bbox_height_bins_px": {
+    "proposed": [
+      60,
+      80,
+      100,
+      150,
+      250
+    ],
+    "note": "Candidate bin edges for reporting; the 3D card minimum is set in gates.v2 after the P1 T4 benchmark."
+  },
+  "team_clustering": {
+    "private_clip_regression": {
+      "kind": "regression gate on the data used to pick the method, not a pre-registered validation",
+      "seeds": "0..19",
+      "track_level_min_correct": "82 of 85 labelled tracks for every seed (historical colour result: 82/85; weighted ReID: 83/85)",
+      "detection_level_min_correct": "the integer count recorded by the first P1b receipt; it must reproduce the historical 98.5% within rounding (the historical count was not saved to disk)"
+    },
+    "gsr_validation": {
+      "kind": "pre-registered validation",
+      "methods": [
+        "lab_colour",
+        "siglip",
+        "weighted_reid"
+      ],
+      "metric": "share of correctly assigned tracks and detections against GSR team-side labels, 20 seeds, mean and worst/best",
+      "threshold": "to be set in gates.v2 before the first GSR team run"
+    },
+    "off_pitch_filter": "zero true players removed (hard gate); recall reported"
+  },
+  "cut_detection": {
+    "private_clip": "4 of 4 cuts (18.96, 26.48, 61.44, 66.64 s) detected within one frame, no other cuts"
+  },
+  "gsr_evaluation": {
+    "split": {
+      "seed": "gbf-gsr-v1",
+      "rule": "order clips by sha256(seed + '/' + clip_name) and take the first n",
+      "dev": {
+        "from": "valid",
+        "n": 6
+      },
+      "holdout": {
+        "from": "test",
+        "n": 12,
+        "fallback": "if test has no ground truth, take 12 further valid clips by the same ordering"
+      },
+      "smoothing_fit": {
+        "from": "train",
+        "n": 4
+      },
+      "match_grouping": "group by match when the clip-to-match mapping is available; otherwise by clip, and say so in the receipt"
+    },
+    "matching": "per frame, Hungarian assignment on box IoU, accepted when IoU >= 0.5",
+    "position_error": "pitch metres between the predicted foot point (box bottom centre through the predicted calibration) and the ground-truth pitch position",
+    "smoothing": "the same zero-phase smoother for prediction and ground truth, parameters fitted on the smoothing_fit clips and committed before dev runs",
+    "peak_speed_error": "for each ground-truth track segment of at least 25 frames (1 s) with fresh predicted calibration: predicted peak minus ground-truth peak of the smoothed speed (peak to peak, not per-frame)",
+    "turn_angle_and_nearest_opponent": "compared as the on-screen quantity, same segments",
+    "noise_floor": "share of ground-truth speeds above 11 m/s and accelerations above 10 m/s^2, key frames and interpolated frames reported separately",
+    "reprojection_error": "only on annotated pitch-line key frames",
+    "reporting": "median and P90 with clip-level (match-level when possible) bootstrap 95% CI, 2000 resamples, seed 0; per-clip values listed; stratified by distance-to-camera terciles and by the depth direction",
+    "wording_on_screen": "deviation from GSR annotation (reference), never 'error'",
+    "p720_handling_choice": "on 50 frames of each dev clip, choose between overriding image size and upsampling to 1080p by median reprojection error on annotated line key frames; within 5% prefer overriding (cheaper)"
+  },
+  "frame_identity": {
+    "lossless_windows": "decoded window frame k must be bit-identical to canonical source frame start+k",
+    "cross_environment": {
+      "proposed_rule": "for 5 sampled indices, same-index frames decoded on two environments must have mean absolute difference <= 1.0 (0-255 scale) and <= 0.25 times the mean absolute difference between that frame and its neighbours"
+    }
+  },
+  "p5_replacement": {
+    "proposed": {
+      "gs_hota_ratio_min": 0.9,
+      "detection_recall_ratio_min": 0.95
+    },
+    "rule": "The permissive perception stack becomes the default only if both ratios hold on the GSR holdout clips at 1080p and at 720p; otherwise it ships as experimental with the gap stated in the README."
+  },
+  "deferred_to_v2": [
+    "3D card gates: minimum box height, 2D keypoint confidence, angle change within +-1 frame, reprojection error per box height (independent 2D detector), and the second-model check semantics (offline only; not_run when research mode is absent).",
+    "2D-versus-3D win criteria for each A-candidate metric.",
+    "Contact-frame module acceptance (for example at least 90% within +-1 frame).",
+    "GSR team-clustering validation thresholds."
+  ],
+  "signoff": {
+    "by": "maintainer, through the instruction of 2026-10-21 to adopt every recommendation of the plan",
+    "date": "2026-10-21",
+    "remote_push": "pending: no project remote exists yet, so this freeze is recorded only by the local commit; the first push will add the server-side time"
+  }
+}

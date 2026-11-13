@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>gbf 本地分析台</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <div class="top-inner">
+    <a class="brand" id="brand" href="#"><span class="logo" aria-hidden="true"></span><span>gbf 本地分析台</span></a>
+    <nav class="nav" id="nav" aria-label="页面"></nav>
+  </div>
+</header>
+<main class="main">
+  <div id="privacy" class="privacy" role="note"></div>
+  <div id="view" aria-live="polite"><p class="muted">正在连接本机服务……</p></div>
+</main>
+<aside id="dock" class="dock" hidden aria-label="全片逐帧标注播放器">
+  <div class="dock-bar">
+    <span id="dock-label" class="dock-label"></span>
+    <button type="button" id="dock-fold" class="icon-btn" aria-controls="dock-video" aria-expanded="true" aria-label="收起播放器" title="收起播放器">▾</button>
+    <button type="button" id="dock-close" class="icon-btn" aria-label="关闭播放器" title="关闭播放器">✕</button>
+  </div>
+  <video id="dock-video" controls preload="metadata"></video>
+</aside>
+<noscript><p class="main">这个页面需要 JavaScript 才能显示。</p></noscript>
+</body>
+</html>

@@ -1,0 +1,85 @@
+# Pinned open-data sources for the demo match.
+#
+# StatsBomb match 3754079 is the SoccerNet game
+# "england_epl/2015-2016/2015-10-03 - 17-00 Manchester City 6 - 1 Newcastle Utd".
+#
+# Every value below is metadata read on 2026-10-21 from the GitHub git trees API
+# (hudl/open-data, formerly statsbomb/open-data) and the Hugging Face tree API
+# (SoccerNet/SN-Labels). No file content was downloaded to write this file.
+# `python -m gbf fetch` checks each download against `bytes` and `git_blob_sha1`
+# (git's blob id: sha1 of "blob <size>\0" + content) before it writes anything,
+# and only ever writes under DATA_ROOT, outside the repository (ADR 0002).
+#
+# URLs are derived from host + repository + revision + path, so a pin cannot point
+# at a different revision than the one it names:
+#   github     -> https://raw.githubusercontent.com/<repository>/<revision>/<path>
+#   hf-dataset -> https://huggingface.co/datasets/<repository>/resolve/<revision>/<path>
+
+schema_version = 1
+
+[terms.statsbomb]
+title = "StatsBomb Public Data User Agreement"
+# LICENSE.pdf at the pinned commit (git blob below, 165130 bytes).
+agreement_url = "https://github.com/hudl/open-data/blob/4b73468fc5b0f1950f9f66fada70ad3a4f9327cb/LICENSE.pdf"
+agreement_git_blob_sha1 = "66c0b4be6bf38b720d347bb140d70b9c47d9a676"
+# Short summary of the clauses this project relies on. It is not the agreement:
+# read the agreement itself before accepting it.
+clauses = [
+    "1.2.1  Do not provide the data to any third party, in any form.",
+    "1.2.2  Do not exploit the data, or analyses derived from it, commercially.",
+    "1.4    Publications that use the data must show the StatsBomb logo.",
+    "2.2    Users must register with StatsBomb before using the data.",
+]
+
+# hudl/open-data master at 4b73468 (2026-09-07). The events file last changed in
+# e3355d7 (2023-07-26), the lineups file in 0bb2d94 (2023-07-07). The match has no
+# three-sixty file.
+[[sources]]
+name = "statsbomb-events-3754079"
+role = "statsbomb_events"
+host = "github"
+repository = "hudl/open-data"
+revision = "4b73468fc5b0f1950f9f66fada70ad3a4f9327cb"
+path = "data/events/3754079.json"
+git_blob_sha1 = "322e44663f5a24c25a05b7d4799b6607f784becb"
+bytes = 3004198
+terms = "statsbomb"
+restrictions = ["no_share", "non_commercial", "statsbomb_logo"]
+
+[[sources]]
+name = "statsbomb-lineups-3754079"
+role = "statsbomb_lineups"
+host = "github"
+repository = "hudl/open-data"
+revision = "4b73468fc5b0f1950f9f66fada70ad3a4f9327cb"
+path = "data/lineups/3754079.json"
+git_blob_sha1 = "142077d7ca117601da0dc0b740443138ae6a2eb4"
+bytes = 17687
+terms = "statsbomb"
+restrictions = ["no_share", "non_commercial", "statsbomb_logo"]
+
+# SoccerNet/SN-Labels main at 8e01649 (2026-09-07); the dataset is not gated. Both
+# files are plain git blobs (not LFS), so the API's oid is the git blob id. The
+# dataset card states no license; SoccerNet label files are never redistributed
+# (ADR 0002), hence no_share.
+[[sources]]
+name = "soccernet-labels-v2-3754079"
+role = "soccernet_labels_v2"
+host = "hf-dataset"
+repository = "SoccerNet/SN-Labels"
+revision = "8e01649fe968da9f541c91019b65b3028b2425fc"
+path = "england_epl/2015-2016/2015-10-03 - 17-00 Manchester City 6 - 1 Newcastle Utd/Labels-v2.json"
+git_blob_sha1 = "853fa133d74bd35555f3e555acb06a4517416b81"
+bytes = 38362
+restrictions = ["no_share"]
+
+[[sources]]
+name = "soccernet-labels-cameras-3754079"
+role = "soccernet_labels_cameras"
+host = "hf-dataset"
+repository = "SoccerNet/SN-Labels"
+revision = "8e01649fe968da9f541c91019b65b3028b2425fc"
+path = "england_epl/2015-2016/2015-10-03 - 17-00 Manchester City 6 - 1 Newcastle Utd/Labels-cameras.json"
+git_blob_sha1 = "dc5a7750f79180b84fa65e6eba5fd71aee9996f0"
+bytes = 154271
+restrictions = ["no_share"]

@@ -1,0 +1,31 @@
+# Media registry (ADR 0002).
+# Validated by src/gbf/contracts/schemas/registry_media.schema.json against the dict
+# that tomllib.load returns.
+#
+# Every image, video or other binary media file tracked by git must be listed here with
+# its sha256 and size; the gate rejects tracked media that is missing from this list or
+# whose bytes differ. Tests generate their media at run time, so the list is empty.
+#
+# What may ever be registered:
+# - synthetic images produced by gbf's own code, for example golden frames of the
+#   renderer drawn from synthetic input;
+# - renders of registered open data that allows redistribution (for example IDSSE),
+#   listing those datasets in data_sources and carrying their attribution;
+# - images the project owns outright: diagrams, and self-recorded material with written,
+#   itemised consent from every identifiable person (plan 8.7; the consent record stays
+#   outside the repository and is referenced by consent_id).
+#
+# What may never be registered: broadcast pixels of any kind (frames, crops,
+# screenshots, thumbnails, renders that contain them), whatever their resolution,
+# source or licence label; anything carrying a restriction tag; NDA-derived renders;
+# SMPL files; model weights.
+#
+# Entry fields (see the schema): id, path (repository-relative), sha256, bytes, kind
+# (golden_frame | test_image | documentation_figure), origin (synthetic | self_owned |
+# rendered_from_registered_data), data_sources, broadcast_pixels = false,
+# people_identifiable, consent_id, license (original images default to CC-BY-4.0,
+# ADR 0001), generator, restrictions = [], created_on ("YYYY-MM-DD"), notes.
+# Replace "media = []" with [[media]] tables when adding the first entry.
+
+schema_version = 1
+media = []

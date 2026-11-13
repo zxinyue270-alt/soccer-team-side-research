@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:gbf:schema:registry_tools",
+  "title": "External tool registry",
+  "description": "Validates the dict that tomllib.load returns for registries/tools.toml: external programs gbf calls (FFmpeg, Git, uv, Python). Tools are installed by the user and never bundled with the repository or its releases. Dates are quoted 'YYYY-MM-DD' strings. Licence facts are engineering judgements, not legal advice.",
+  "type": "object",
+  "required": ["schema_version", "tools"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "tools": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/tool"}
+    }
+  },
+  "$defs": {
+    "id": {
+      "description": "Stable lowercase identifier: letters and digits in groups joined by '-' or '.'.",
+      "type": "string",
+      "pattern": "^[a-z0-9]+([.-][a-z0-9]+)*$"
+    },
+    "text": {"type": "string", "minLength": 1},
+    "url": {
+      "description": "Absolute http(s) URL in printable ASCII without spaces.",
+      "type": "string",
+      "pattern": "^https?://[!-~]+$"
+    },
+    "license": {
+      "description": "SPDX licence expression or LicenseRef-* id.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9.+()-]+( (AND|OR|WITH) [A-Za-z0-9.+()-]+)*$"
+    },
+    "tool": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "kind",
+        "executables",
+        "required_for",
+        "license",
+        "license_note",
+        "bundled",
+        "version_spec",
+        "tested_version",
+        "runtime_check",
+        "upstream_url",
+        "verified_on",
+        "notes"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "name": {"$ref": "#/$defs/text"},
+        "kind": {"enum": ["external_binary", "interpreter", "package_manager", "version_control"]},
+        "executables": {
+          "description": "Program names that must be found on PATH (or, for the interpreter, inside the virtualenv).",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/text"}
+        },
+        "required_for": {
+          "description": "runtime: pipeline commands. tests: the test suite and the gate. setup: creating the environment. receipts: provenance written into receipts.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"enum": ["runtime", "tests", "setup", "receipts"]}
+        },
+        "license": {
+          "description": "Licence of the upstream project as usually distributed.",
+          "$ref": "#/$defs/license"
+        },
+        "license_note": {
+          "description": "How builds differ (for example GPL FFmpeg builds) and what that means for distribution.",
+          "$ref": "#/$defs/text"
+        },
+        "bundled": {
+          "description": "Always false: external tools are never bundled or redistributed by gbf.",
+          "const": false
+        },
+        "version_spec": {
+          "description": "PEP 440-style specifier the version must satisfy, or 'any' when no minimum has been established.",
+          "$ref": "#/$defs/text"
+        },
+        "tested_version": {
+          "description": "Version used when this entry was verified.",
+          "$ref": "#/$defs/text"
+        },
+        "runtime_check": {
+          "description": "enforced: commands refuse to run outside version_spec. recorded: the version found is written into receipts. not_checked: setup-only tool.",
+          "enum": ["enforced", "recorded", "not_checked"]
+        },
+        "upstream_url": {"$ref": "#/$defs/url"},
+        "verified_on": {"$ref": "urn:gbf:schema:common#/$defs/date"},
+        "notes": {"$ref": "#/$defs/text"}
+      },
+      "allOf": [
+        {
+          "if": {"required": ["runtime_check"], "properties": {"runtime_check": {"const": "enforced"}}},
+          "then": {"properties": {"version_spec": {"not": {"const": "any"}}}}
+        }
+      ]
+    }
+  }
+}

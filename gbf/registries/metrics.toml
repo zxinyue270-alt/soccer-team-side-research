@@ -1,0 +1,709 @@
+# Metric registry (ADR 0004).
+# Validated by src/gbf/contracts/schemas/registry_metrics.schema.json against the dict
+# that tomllib.load returns.
+#
+# Every metric of plan section 4, plus the C tier of plan 1.1. Renderers, cards and
+# narration consult this file: a C-tier metric is blocked everywhere, and a metric whose
+# error_status is not "measured" or "provider" is shown as "unverified" and hidden from
+# public builds.
+#
+# Conventions
+# - tier: official | A | A_candidate | B | C (ADR 0004).
+# - min_fps: lowest source frame rate the metric is defined and validated for. All
+#   validation data is 25 fps, so video metrics start at 25. 0 = not applicable
+#   (official values come from a provider; C metrics are blocked whatever the input).
+# - min_bbox_px: minimum box height of the subject in source pixels; 0 = no
+#   requirement or not applicable. A_candidate uses the 80 px coverage threshold and B
+#   the 150 px general gate; both are candidates until the P1 benchmark
+#   (thresholds_provisional = true; the 3D card minimum is set in gates v2).
+# - needs_fresh_calibration: calibration computed on the frame itself (gate G6).
+#   needs_contact_frame: a keyframe output that passed G14, or a manually confirmed
+#   frame. needs_ball_detection: unavailable before ball detection is measured (P5).
+#   Where the plan's prerequisite column is silent, these flags follow from the method.
+# - error_status: provider (official only) | unmeasured | measured (with error_receipt).
+# - certified_by: datasets whose results may certify the metric's error claim
+#   (ADR 0004); weak_label_sources: labels that only give agreement rates.
+# - fitted_parameters record their data sources and inherit those sources'
+#   restrictions (ADR 0002 rule 3). Ids refer to registries/data.toml.
+
+schema_version = 1
+
+# ---------------------------------------------------------------------------------
+# Official: provider values, shown with a source badge
+# ---------------------------------------------------------------------------------
+
+[[metrics]]
+id = "shot-xg"
+name = "Single-shot xG"
+tier = "official"
+blocked = false
+min_fps = 0
+min_bbox_px = 0
+thresholds_provisional = false
+needs_fresh_calibration = false
+needs_contact_frame = false
+needs_ball_detection = false
+error_status = "provider"
+data_sources = ["statsbomb-open-data", "idsse"]
+certified_by = []
+method = "Read shot.statsbomb_xg (demo match) or the IDSSE official xG; claimType provider_model; two decimals; a running total ('xG so far') stores its formula and operands."
+limitations = "A provider's model output, never compared with other providers' xG. Event-video alignment: 25 of 27 shots within 0.15 s, the other 2 used only after manual confirmation. StatsBomb values: no redistribution, non-commercial, logo on publication."
+
+[[metrics]]
+id = "shot-attributes"
+name = "Shot technique, body part and outcome"
+tier = "official"
+blocked = false
+min_fps = 0
+min_bbox_px = 0
+thresholds_provisional = false
+needs_fresh_calibration = false
+needs_contact_frame = false
+needs_ball_detection = false
+error_status = "provider"
+data_sources = ["statsbomb-open-data"]
+certified_by = []
+method = "Read technique, body_part and outcome from the provider event (claimType official_fact)."
+limitations = "The data provider's manual annotation; its accuracy is not verified by this project."
+
+[[metrics]]
+id = "pass-endpoints"
+name = "Pass start and end locations"
+tier = "official"
+blocked = false
+min_fps = 0
+min_bbox_px = 0
+thresholds_provisional = false
+needs_fresh_calibration = false
+needs_contact_frame = false
+needs_ball_detection = false
+error_status = "provider"
+data_sources = ["statsbomb-open-data"]
+certified_by = []
+method = "Read the pass location and pass.end_location; drawn as an arrow."
+limitations = "Manual annotation; coordinate accuracy not verified. No continuous ball trajectory is drawn before P5."
+
+# ---------------------------------------------------------------------------------
+# A: trajectory level, with coverage and a sourced error reference
+# ---------------------------------------------------------------------------------
+
+[[metrics]]
+id = "positions-trajectories"
+name = "Positions and trajectories (top-down board)"
+tier = "A"
+blocked = false
+min_fps = 25
+min_bbox_px = 0
+thresholds_provisional = false
+needs_fresh_calibration = true
+needs_contact_frame = false
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = ["soccernet-gsr-2025"]
+literature = [
+  "Crang 2026: RMSE 1.68-16.39 m for AI tracking from broadcast video.",
+  "Linke 2018: 56 +/- 16 cm for a semi-automatic multi-camera system.",
+]
+method = "Box-bottom midpoint mapped to pitch metres with the frame's own homography; fresh-calibration frames only; tracks break at cuts; gaps of at most 5 frames inside one shot are interpolated and flagged; players outside the image are not drawn."
+limitations = "The box bottom is not the foot. On screen the reference reads 'deviation relative to GSR annotations (reference)'."
+
+[[metrics]]
+id = "peak-speed"
+name = "Peak speed within a clip"
+tier = "A"
+blocked = false
+min_fps = 25
+min_bbox_px = 0
+thresholds_provisional = false
+needs_fresh_calibration = true
+needs_contact_frame = false
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = ["soccernet-gsr-2025"]
+method = "Within one shot, on pitch-usable (fresh-calibration) frames: ground positions cleaned of box-size changes, local-median outliers and excursions from the local trend, and split where the trend jumps or the trends around a junction need more than 8 m/s^2 (gbf.kinematics); zero-phase smoothing (Savitzky-Golay) of each segment; speed = the chord of the smoothed positions centred on each frame over 0.4 s (10 frames at 25 fps; the card label states the chord's actual duration), valid where both chord ends are measured positions away from the segment ends in a segment of at least 1 s (25 frames); peak = the highest valid speed in the window, the same speeds the overlay labels and the sprint cue show. Withheld when valid speeds cover less than half of the frames the player was tracked on the pitch (leaving out the 10 frames at the start and end of the player's track in a shot, which no chord can cover), when the highest valid speed lies within half a chord of a stretch without valid speeds, or when the player crosses a gap in the track faster than it."
+limitations = "Deviation measured peak to peak on GSR holdout clips with a confidence interval; stays conditional until an independent reference (for example optical tracking with video) exists, and the card states what the reference is. No acceleration and no full-match distance. Computing on a 105 x 68 m template scales the error with the real pitch size. The chord reads a sprint's 0.4 s mean, slightly below its instantaneous peak. Artefacts the cleaning keeps, measured on synthetic 6 s runs of 1-9 m/s (25 fps; noise per axis; figures with noise are the largest seen in the sample named, not bounds): an identity switch from one frame to the next stays up to 0.46 m on clean positions (0.72 m across 3 missing frames); with noise the largest seen to stay in 60 tracks per size (10 seeds x 6 runners) are 0.7 m with 5 cm, 0.95 m with 10 cm, 1.35 m with 20 cm and 1.45 m with 30 cm (1.05, 1.15, 1.4 and 1.6 m across 1-3 missing frames). A switch that stays adds up to 1.084 times its size over 0.4 s along the motion (1.25 m/s at 0.46 m), plus what the noise adds (in that sample up to 1.72, 2.27, 3.08 and 3.36 m/s in all with 5, 10, 20 and 30 cm, and 2.71, 2.89, 3.37 and 3.94 m/s across missing frames; another 5-seed x 6-runner sample per size and missing-frame count keeps 1.2 m at 10 cm and 1.45 m at 20 cm across missing frames, adding up to 2.97 and 3.40 m/s respectively); on clean positions a slide onto a neighbour slower than 1 m in 5 frames, 2 m in 13, 3 m in 17, 5 m in 21 or 8 m in 23 is kept (with noise some faster ones are kept too) and read as the slide's own speed on top of the player's (at most 2.7 % or 0.15 m/s more), bounded only by the 12 m/s plausibility limit (a 1 m/s jogger sliding 9.5 m in 24 frames reads 11.04 m/s), and so are the ramps of an excursion out and back (up to 5.7 m/s added); an out-and-back dip that stays adds up to 2.4 m/s on clean positions, also below 1 m (2.38 m/s at 0.99 m), and up to 2.57 m/s with 10 cm and 3.07 m/s with 20 cm of noise (12 tracks per size and length); two short dips of 1.05-2 m a few frames apart are rejected whole in 3127 of 3150 clean pairs (the others add up to 0.46 m/s) and add up to 2.19 m/s with 5-10 cm of noise (the largest seen in 6300 and 882 pairs per level), three 3-frame dips of 1.2 m 1-3 frames apart are not rejected whole and add up to 2.55 m/s, two dips below 1 m up to 1.94 m/s and two dips of which one lasts 4 frames up to 2.28 m/s (clean); noise alone raises a track's highest speed by a median of 0.4 m/s and at most 0.6 m/s per 10 cm."
+fitted_parameters = [
+  { name = "speed-smoothing", data_sources = ["soccernet-gsr-2025"], restrictions = [], note = "Zero-phase smoother shared with change-of-direction. Not fitted yet: gbf uses Savitzky-Golay window 11, order 2 with the 0.4 s chord, set during M1. The fit on GSR train clips that prereg/gates.v1.json asks for waits until v2 states its objective (prereg/README.md P1); evaluations declare this as deviation D1." },
+]
+
+[[metrics]]
+id = "change-of-direction"
+name = "Change-of-direction angle and entry/exit speeds"
+tier = "A"
+blocked = false
+min_fps = 25
+min_bbox_px = 0
+thresholds_provisional = false
+needs_fresh_calibration = true
+needs_contact_frame = false
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = ["soccernet-gsr-2025"]
+method = "At the curvature peak of the smoothed trajectory: the angle between the entry and exit velocity vectors, and both speeds."
+limitations = "Same conditions as peak-speed; trajectory level only; no injury judgement."
+fitted_parameters = [
+  { name = "speed-smoothing", data_sources = ["soccernet-gsr-2025"], restrictions = [], note = "Shared with peak-speed." },
+]
+
+[[metrics]]
+id = "run-up-angle-speed"
+name = "Shot run-up angle and speed"
+tier = "A"
+blocked = false
+min_fps = 25
+min_bbox_px = 0
+thresholds_provisional = false
+needs_fresh_calibration = true
+needs_contact_frame = true
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+method = "Horizontal pelvis or box-bottom trajectory over the last 2-3 steps before contact, against the ball direction (StatsBomb end_location before P5); bins of 10-15 degrees."
+limitations = "Scurr and Hall 2009 found no difference in accuracy or ball speed between 30, 45 and 60 degree run-ups, so the wording never implies that a larger angle is better."
+
+[[metrics]]
+id = "nearest-opponent-distance"
+name = "Nearest in-frame opponent distance at contact"
+tier = "A"
+blocked = false
+min_fps = 25
+min_bbox_px = 0
+thresholds_provisional = false
+needs_fresh_calibration = true
+needs_contact_frame = true
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = ["soccernet-gsr-2025"]
+method = "Median over the contact frame +/- 2 frames; the goalkeeper is reported separately."
+limitations = "Depends on team and role assignment. Freeze frames are only a cross-check: their positions are manual estimates too, so their agreement distribution is measured first. Always labelled 'in frame'."
+
+[[metrics]]
+id = "defenders-in-shot-triangle"
+name = "Defenders between the shot and the goal"
+tier = "A"
+blocked = false
+min_fps = 25
+min_bbox_px = 0
+thresholds_provisional = false
+needs_fresh_calibration = true
+needs_contact_frame = false
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+method = "Count opponents inside the triangle formed by the shot location and the two posts at the moment of the shot; shown only when at least 4 defenders are in frame."
+limitations = "Players outside the image make the value too small; freeze frames are only a cross-check."
+
+[[metrics]]
+id = "defensive-line-height-width"
+name = "Defensive line height and team width at the shot"
+tier = "A"
+blocked = false
+min_fps = 25
+min_bbox_px = 0
+thresholds_provisional = false
+needs_fresh_calibration = true
+needs_contact_frame = false
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+method = "Height of the defensive line and width of the defending team from in-frame pitch positions at the moment of the shot; shown only when at least 4 defenders are in frame."
+limitations = "Players outside the image bias the values; freeze frames are only a cross-check."
+
+# ---------------------------------------------------------------------------------
+# A_candidate: 3D; 'unverified' until P4 measures it and it beats its 2D baseline
+# ---------------------------------------------------------------------------------
+
+[[metrics]]
+id = "body-orientation"
+name = "Body orientation to the attacked goal at own touch or reference frame"
+tier = "A_candidate"
+blocked = false
+min_fps = 25
+min_bbox_px = 80
+thresholds_provisional = true
+needs_fresh_calibration = true
+needs_contact_frame = false
+needs_ball_detection = false
+two_d_baseline = "2D shoulder and hip keypoints combined with the camera's line of sight (after Arbués-Sangüesa)."
+error_status = "unmeasured"
+certified_by = ["worldpose"]
+method = "Angle between the height-prior lifted facing and the direction to the attacked goal, using a circular mean over the player's own matched touch frame +/- 2 frames, else the player's reference frame. This is a 3D reference, not a verified body measurement."
+limitations = "Needs a visible trunk, the box-height minimum, fresh calibration and the confidence, uncertainty and circular-resultant gates. A per-frame reversal check withholds a facing when the 2D hip-to-shoulder trunk exceeds FACING_LEAN_DEG toward one image side while the projected facing points to the other by at least FACING_SIDE_SHARE, or cannot be projected. Upright and near-depth directions pass this check only; missing hip/shoulder keypoints leave this check unavailable, and the other display gates still apply. The reference frame is reported and is not a confirmed contact. The receiver is often off screen, so coverage is always reported. 80 px is the current provisional display minimum and the coverage threshold of prereg/gates.v1.json; revisit it in gates v2 after the P1 benchmark."
+
+[[metrics]]
+id = "trunk-lean-at-contact"
+name = "Signed trunk lean in degrees at own touch or reference frame"
+tier = "A_candidate"
+blocked = false
+min_fps = 25
+min_bbox_px = 80
+thresholds_provisional = true
+needs_fresh_calibration = true
+needs_contact_frame = false
+needs_ball_detection = false
+two_d_baseline = "2D hip-midpoint-to-shoulder-midpoint line corrected for camera tilt and roll; valid only when the sagittal plane is close to parallel with the image plane, stratified by camera azimuth."
+error_status = "unmeasured"
+certified_by = ["worldpose"]
+method = "Median signed sagittal trunk lean from the height-prior lift over the player's own matched touch frame +/- 2 frames, else the player's reference frame; reported as continuous degrees, positive forward. After its own box-height and lean-uncertainty gates, each row passes the shared 2D trunk versus projected-facing reversal check; rejected rows are excluded and counted. This adds no facing confidence or facing uncertainty gate to lean. The stable metric id is retained for compatibility; a reference frame is not a confirmed contact."
+limitations = "Zero-shot SAM 3D Body already shows 7.7-9.0 cm local error on FIFA 1080p footage and 720p is worse, so the angle error exceeds the earlier +/- 5-10 degree estimate; any future categorical bin edges require P4 validation. Not reported without per-frame calibration (most replays). 'Leaning back sends the ball high' is coaching lore only."
+
+# ---------------------------------------------------------------------------------
+# B: experimental badge, bins and confidence only. General gate: box height >= 150 px
+# (set after P1), bins of at least 15 degrees, and gate G12.
+# ---------------------------------------------------------------------------------
+
+[[metrics]]
+id = "gk-stance-and-flexion"
+name = "Goalkeeper stance width (wide bins) and knee and hip flexion"
+tier = "B"
+blocked = false
+min_fps = 25
+min_bbox_px = 150
+thresholds_provisional = true
+needs_fresh_calibration = false
+needs_contact_frame = true
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+method = "Ankle distance divided by leg length, with bin width set from the measured error; knee and hip flexion under the general B gate."
+limitations = "The ankle is among the least accurate joints: for a stance of about 0.3 m the error can reach tens of percent."
+
+[[metrics]]
+id = "gk-set-position"
+name = "Goalkeeper set before the shot"
+tier = "B"
+blocked = false
+min_fps = 25
+min_bbox_px = 150
+thresholds_provisional = true
+needs_fresh_calibration = true
+needs_contact_frame = true
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+weak_label_sources = ["statsbomb-open-data"]
+method = "2D cues: both feet on the ground, and the displacement of the smoothed box-bottom trajectory within a window of at least 0.5 s; agreement rate with StatsBomb goalkeeper position labels used as weak labels."
+limitations = "Root velocity comes from ground anchoring, which cannot tell 'set' from small steps. Check the StatsBomb field names (Set, Moving, Prone) before use."
+
+[[metrics]]
+id = "save-type-direction"
+name = "Save type and direction"
+tier = "B"
+blocked = false
+min_fps = 25
+min_bbox_px = 150
+thresholds_provisional = true
+needs_fresh_calibration = false
+needs_contact_frame = true
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+weak_label_sources = ["statsbomb-open-data"]
+method = "Classification of the 3D pose sequence; weak validation against StatsBomb goalkeeper technique labels (Diving, Standing; names to be checked)."
+limitations = "A dive is exactly where ground anchoring is known to fail (SMART)."
+
+[[metrics]]
+id = "sagittal-flexion-snapshot"
+name = "Sagittal-plane joint flexion snapshot (support knee, peak backswing knee, hip)"
+tier = "B"
+blocked = false
+min_fps = 25
+min_bbox_px = 150
+thresholds_provisional = true
+needs_fresh_calibration = false
+needs_contact_frame = true
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+method = "Angles read from MHR segment rotation matrices on unsmoothed per-frame estimates. The small correction table of arXiv 2607.17639 is not applied until it is refitted on same-domain data."
+limitations = "No published validation of joint angles from wide broadcast shots; joint errors of 5-9 cm imply roughly 7-13 degrees or more at knee and hip. WorldPose's own ground-truth noise is around 10 degrees (inferred), too coarse to judge 15-degree bins, so this is measured on the self-recorded reference instead (not yet registered)."
+
+[[metrics]]
+id = "striking-body-part"
+name = "Striking body part (left foot, right foot, head)"
+tier = "B"
+blocked = false
+min_fps = 25
+min_bbox_px = 150
+thresholds_provisional = true
+needs_fresh_calibration = false
+needs_contact_frame = true
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+weak_label_sources = ["statsbomb-open-data"]
+method = "Relation between each foot and the ball, or the foot-speed peak; the head close to the ball counts as a header."
+limitations = "The demo match has only 29 shots (StatsBomb: right foot 17, left foot 7, head 5), so agreement intervals are wide. They were already seen during P3 development; the P4 holdout uses the other 48 overlapping matches once the NDA covers them."
+
+[[metrics]]
+id = "pass-technique"
+name = "Passing technique (inside-foot push or instep)"
+tier = "B"
+blocked = false
+min_fps = 25
+min_bbox_px = 150
+thresholds_provisional = true
+needs_fresh_calibration = false
+needs_contact_frame = true
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+method = "Binary classifier on the orientation of foot, shank and pelvis 1-2 frames around contact, plus the ball's exit speed."
+limitations = "Needs a self-built labelled set; no accuracy reports exist for broadcast conditions."
+
+[[metrics]]
+id = "sprint-step-frequency"
+name = "Sprint step frequency"
+tier = "B"
+blocked = false
+min_fps = 25
+min_bbox_px = 150
+thresholds_provisional = true
+needs_fresh_calibration = false
+needs_contact_frame = false
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+method = "Mean over 6-8 consecutive steps."
+limitations = "Needs a side view; 50 fps is preferred, since at 25 fps one step spans only about 5 frames."
+
+[[metrics]]
+id = "header-takeoff-timing"
+name = "Header take-off timing (early or late; one or two feet)"
+tier = "B"
+blocked = false
+min_fps = 25
+min_bbox_px = 150
+thresholds_provisional = true
+needs_fresh_calibration = false
+needs_contact_frame = false
+needs_ball_detection = true
+error_status = "unmeasured"
+certified_by = []
+method = "Take-off frame compared with the time the ball arrives."
+limitations = "Before P5 ball detection the arrival time is only known from events (about +/- 0.15 s), far too coarse for early or late calls at the +/- 40 ms level, so the output is unavailable before P5."
+
+[[metrics]]
+id = "gk-dive-initiation-timing"
+name = "Goalkeeper save initiation (early or late)"
+tier = "B"
+blocked = false
+min_fps = 25
+min_bbox_px = 150
+thresholds_provisional = true
+needs_fresh_calibration = false
+needs_contact_frame = true
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+method = "Initiation is the lowest point of the crouch before the jump (both feet down, so it can be anchored), not an extreme of the airborne phase, which is interpolated."
+limitations = "Needs the shot contact frame; at 25 fps only a coarse early or late call."
+
+[[metrics]]
+id = "pre-reception-scan"
+name = "Looking around before receiving (yes or no)"
+tier = "B"
+blocked = false
+min_fps = 25
+min_bbox_px = 150
+thresholds_provisional = true
+needs_fresh_calibration = false
+needs_contact_frame = true
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+method = "Within the window before reception, whether the orientation of the head keypoints ever leaves the ball direction."
+limitations = "The receiver is often off screen. Scanning frequency is C tier."
+
+[[metrics]]
+id = "shot-pose-clusters"
+name = "Shot contact pose snapshot and clustering (descriptive, not scored)"
+tier = "B"
+blocked = false
+min_fps = 25
+min_bbox_px = 150
+thresholds_provisional = true
+needs_fresh_calibration = false
+needs_contact_frame = true
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+weak_label_sources = ["statsbomb-open-data"]
+method = "Root-relative poses aligned by Procrustes, then PCA and k-means; stability over several seeds; a permutation test rules out camera and scale confounds; cluster purity against StatsBomb technique labels."
+limitations = "Demoted from A to B because it has no measurable error. The demo match has 24 foot shots, possibly single digits after the gates (AutoSoccerPose used 200)."
+
+[[metrics]]
+id = "first-touch-outcome"
+name = "First-touch outcome"
+tier = "B"
+blocked = false
+min_fps = 25
+min_bbox_px = 150
+thresholds_provisional = true
+needs_fresh_calibration = false
+needs_contact_frame = false
+needs_ball_detection = true
+error_status = "unmeasured"
+certified_by = []
+method = "Ball-detection trajectory combined with the event time."
+limitations = "Not output before P5 ball detection has been measured. The cushioning mechanism is C tier."
+
+# ---------------------------------------------------------------------------------
+# C: not measurable from monocular 25 fps broadcast video. Blocked: any caption, card
+# or narration that contains one of these fails the gate (G13).
+# ---------------------------------------------------------------------------------
+
+[[metrics]]
+id = "joint-angular-velocity"
+name = "Joint angular velocities and proximal-to-distal sequencing"
+tier = "C"
+blocked = true
+blocked_reason = "Knee extension reaches 860-1720 degrees per second, so the knee angle changes by 34-69 degrees within one 40 ms frame at 25 fps."
+min_fps = 0
+min_bbox_px = 0
+thresholds_provisional = false
+needs_fresh_calibration = false
+needs_contact_frame = false
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+method = "Not computed."
+limitations = "At 25 fps no time derivative of a joint is ever output (G13)."
+
+[[metrics]]
+id = "foot-speed"
+name = "Foot speed"
+tier = "C"
+blocked = true
+blocked_reason = "A time derivative of a distal joint; at 25 fps none is output (plan 1.1, G13)."
+min_fps = 0
+min_bbox_px = 0
+thresholds_provisional = false
+needs_fresh_calibration = false
+needs_contact_frame = false
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+method = "Not computed."
+limitations = "Internal cues such as a foot-speed peak may help classify a B metric but are never shown."
+
+[[metrics]]
+id = "ball-speed"
+name = "Ball speed"
+tier = "C"
+blocked = true
+blocked_reason = "Plan 1.1 lists it as not measurable from monocular 25 fps broadcast video."
+min_fps = 0
+min_bbox_px = 0
+thresholds_provisional = false
+needs_fresh_calibration = false
+needs_contact_frame = false
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+method = "Not computed."
+limitations = "Revisit only with measured ball detection and a validated reference."
+
+[[metrics]]
+id = "ball-contact-point-duration-spin"
+name = "Ball contact point, contact duration and spin"
+tier = "C"
+blocked = true
+blocked_reason = "An instep contact lasts about 9 ms, shorter than one 40 ms frame."
+min_fps = 0
+min_bbox_px = 0
+thresholds_provisional = false
+needs_fresh_calibration = false
+needs_contact_frame = false
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+method = "Not computed."
+limitations = "No model can recover what falls between frames."
+
+[[metrics]]
+id = "support-foot-distance-cm"
+name = "Centimetre-level support-foot distance to the ball"
+tier = "C"
+blocked = true
+blocked_reason = "Centimetre precision is far below the 5-9 cm joint error of monocular 3D at broadcast resolution."
+min_fps = 0
+min_bbox_px = 0
+thresholds_provisional = false
+needs_fresh_calibration = false
+needs_contact_frame = false
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+method = "Not computed."
+limitations = "Blocked in plan 1.1."
+
+[[metrics]]
+id = "knee-valgus"
+name = "Knee valgus"
+tier = "C"
+blocked = true
+blocked_reason = "The decisive changes happen within 40 ms of foot strike, about one frame at 25 fps."
+min_fps = 0
+min_bbox_px = 0
+thresholds_provisional = false
+needs_fresh_calibration = false
+needs_contact_frame = false
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+method = "Not computed."
+limitations = "No injury-related judgement is made from broadcast video."
+
+[[metrics]]
+id = "hip-rotation"
+name = "Hip rotation"
+tier = "C"
+blocked = true
+blocked_reason = "Plan 1.1 lists it as not measurable from monocular 25 fps broadcast video."
+min_fps = 0
+min_bbox_px = 0
+thresholds_provisional = false
+needs_fresh_calibration = false
+needs_contact_frame = false
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+method = "Not computed."
+limitations = "Blocked in plan 1.1."
+
+[[metrics]]
+id = "ground-contact-time"
+name = "Ground-contact time"
+tier = "C"
+blocked = true
+blocked_reason = "Plan 1.1 lists it as not measurable from monocular 25 fps broadcast video."
+min_fps = 0
+min_bbox_px = 0
+thresholds_provisional = false
+needs_fresh_calibration = false
+needs_contact_frame = false
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+method = "Not computed."
+limitations = "Blocked in plan 1.1."
+
+[[metrics]]
+id = "injury-risk-score"
+name = "Injury risk scores"
+tier = "C"
+blocked = true
+blocked_reason = "Not measurable from broadcast video and outside the project's scope; no injury judgements (plan 1.1 and 4)."
+min_fps = 0
+min_bbox_px = 0
+thresholds_provisional = false
+needs_fresh_calibration = false
+needs_contact_frame = false
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+method = "Not computed."
+limitations = "Blocked in plan 1.1."
+
+[[metrics]]
+id = "jump-height-flight-time"
+name = "Jump height and flight time"
+tier = "C"
+blocked = true
+blocked_reason = "At 25 fps each frame of error at take-off or landing changes the jump height by about 5 cm."
+min_fps = 0
+min_bbox_px = 0
+thresholds_provisional = false
+needs_fresh_calibration = false
+needs_contact_frame = false
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+method = "Not computed."
+limitations = "Blocked in plan 1.1."
+
+[[metrics]]
+id = "full-match-distance"
+name = "Full-match running distance"
+tier = "C"
+blocked = true
+blocked_reason = "Broadcast video shows part of the pitch and cuts between cameras, so a player's whole-match path is not observed."
+min_fps = 0
+min_bbox_px = 0
+thresholds_provisional = false
+needs_fresh_calibration = false
+needs_contact_frame = false
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+method = "Not computed."
+limitations = "Peak speed within one shot (A tier) is the only speed quantity."
+
+[[metrics]]
+id = "acceleration"
+name = "Acceleration"
+tier = "C"
+blocked = true
+blocked_reason = "A second derivative of a smoothed broadcast trajectory; the plan reports peak speed only."
+min_fps = 0
+min_bbox_px = 0
+thresholds_provisional = false
+needs_fresh_calibration = false
+needs_contact_frame = false
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+method = "Not computed."
+limitations = "Blocked in plan 1.1 and section 4."
+
+[[metrics]]
+id = "scanning-frequency-ranking"
+name = "Scanning-frequency rankings"
+tier = "C"
+blocked = true
+blocked_reason = "Plan 1.1 lists it as not measurable from monocular 25 fps broadcast video; receivers are often off screen (plan 4)."
+min_fps = 0
+min_bbox_px = 0
+thresholds_provisional = false
+needs_fresh_calibration = false
+needs_contact_frame = false
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+method = "Not computed."
+limitations = "The B metric pre-reception-scan gives yes or no only."
+
+[[metrics]]
+id = "gk-centre-of-mass-velocity"
+name = "Goalkeeper centre-of-mass velocity"
+tier = "C"
+blocked = true
+blocked_reason = "Root velocity comes from ground anchoring, which fails exactly in dives (SMART)."
+min_fps = 0
+min_bbox_px = 0
+thresholds_provisional = false
+needs_fresh_calibration = false
+needs_contact_frame = false
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+method = "Not computed."
+limitations = "Blocked in plan 1.1."
+
+[[metrics]]
+id = "first-touch-cushioning-mechanics"
+name = "First-touch cushioning mechanics"
+tier = "C"
+blocked = true
+blocked_reason = "Plan section 4 places the cushioning mechanism in the C tier."
+min_fps = 0
+min_bbox_px = 0
+thresholds_provisional = false
+needs_fresh_calibration = false
+needs_contact_frame = false
+needs_ball_detection = false
+error_status = "unmeasured"
+certified_by = []
+method = "Not computed."
+limitations = "The B metric first-touch-outcome covers only the result of the touch."

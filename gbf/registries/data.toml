@@ -1,0 +1,282 @@
+# Data rights registry (ADR 0002).
+# Validated by src/gbf/contracts/schemas/registry_data.schema.json against the dict that
+# tomllib.load returns.
+#
+# For every dataset the project uses, considers or has rejected: where the permission
+# comes from (rights_source), the licence label, the restriction tags every per-item
+# derivative inherits, the uses the terms allow, whether aggregate results may be
+# published, and when and where those facts were verified. Upload, publish and deploy
+# tools consult this file; the gate blocks entries whose status is blocked or rejected.
+#
+# Conventions
+# - Dates are quoted "YYYY-MM-DD" strings so the dict validates as JSON.
+# - allowed_uses lists what the terms allow for this project; anything absent is not
+#   allowed. Vocabulary: local_processing, cloud_processing, evaluation, fitting,
+#   smoke_testing, publish_aggregates, publish_analysis, publish_media, redistribute,
+#   commercial, third_party_services (defined in the schema).
+# - aggregate_publication: allowed | not_allowed | unverified. Aggregates computed from
+#   several datasets (tag derived_aggregate) are released only when every source says
+#   "allowed".
+# - A licence label shown by a hosting platform is recorded, but it is not a rights
+#   source by itself (see the Roboflow entry).
+# - Clauses are paraphrases for orientation, not the terms: read the terms themselves
+#   before accepting them. Applications and their dates live in docs/data-access.md.
+# - Facts dated 2026-10-21 come from the project's read-only research of that day and
+#   plan appendix B; "not re-checked" marks reviewer facts appendix B did not re-read.
+#
+# Engineering judgement, not legal advice.
+
+schema_version = 1
+
+[[datasets]]
+id = "statsbomb-open-data"
+name = "StatsBomb Open Data (hudl/open-data)"
+kind = "events"
+status = "planned"
+acquisition = "pinned_download"
+license = "LicenseRef-StatsBomb-Public-Data-User-Agreement"
+rights_source = "StatsBomb Public Data User Agreement (version dated 2023-09-08; LICENSE.pdf in hudl/open-data), accepted by each user who registers with StatsBomb. gbf holds no separate licence. Clause texts were read by reviewer 3 and not re-checked in appendix B."
+restrictions = ["no_share", "non_commercial", "statsbomb_logo"]
+allowed_uses = ["local_processing", "evaluation", "fitting", "publish_analysis", "publish_aggregates"]
+aggregate_publication = "allowed"
+committable = false
+attribution = "Data: StatsBomb. Every published analysis shows the StatsBomb logo (agreement clause 1.4)."
+pins = "src/gbf/events/pins.toml"
+subset = ["Match 3754079: Manchester City 6-1 Newcastle United, Premier League 2015/16, 2015-10-03 (3,448 events: 986 passes, 29 shots; xG 3.90 vs 1.26). It is the SoccerNet game england_epl/2015-2016/2015-10-03 - 17-00 Manchester City 6 - 1 Newcastle Utd."]
+clauses = [
+  { ref = "1.2.1", summary = "No editing, distributing or copying the data, or making it available to any third party in any way.", handling = "Runtime download only (pins.toml, hash-checked, written under DATA_ROOT); raw JSON and evidence stores are never committed, never uploaded to cloud services, and not sent to third-party LLM or TTS services until clarified (tag no_share)." },
+  { ref = "1.2.2", summary = "No commercial exploitation of the data or of analyses derived from it.", handling = "Tag non_commercial: commercial channels refuse anything derived from it." },
+  { ref = "1.4", summary = "Published analyses must carry the StatsBomb logo.", handling = "Tag statsbomb_logo: publish tools add the logo automatically." },
+  { ref = "2.2", summary = "Users register with StatsBomb before using the data.", handling = "Each user registers and accepts the agreement personally; python -m gbf fetch asks for explicit acceptance; tracked in docs/data-access.md." },
+  { ref = "7", summary = "StatsBomb owns the data.", handling = "No ownership claims and no redistribution." },
+]
+verified_url = "https://github.com/hudl/open-data"
+verified_on = "2026-10-21"
+notes = "Raw data and evidence stores are no_share; analyses derived from it are non_commercial and need the logo when published. Publishing a StatsBomb-based analysis needs a release step that keeps raw values and the evidence store private (ADR 0002, open point); until that exists nothing derived from it is published. Event-video alignment uses fixed per-half offsets (+1.91 s and +2.29 s; 25 of 27 shots within 0.15 s), an agreement between two manual annotations rather than an error against true contact frames."
+
+[[datasets]]
+id = "soccernet-sn-labels"
+name = "SoccerNet SN-Labels (Labels-v2 actions, Labels-cameras shot types)"
+kind = "annotations"
+status = "planned"
+acquisition = "pinned_download"
+license = "NONE"
+rights_source = "None declared: the Hugging Face dataset card states no licence (the MIT licence of the SoccerNet code repository does not cover the labels), so default copyright applies. The dataset is public and not gated."
+restrictions = ["no_share"]
+allowed_uses = ["local_processing", "evaluation", "fitting"]
+aggregate_publication = "unverified"
+committable = false
+pins = "src/gbf/events/pins.toml"
+subset = ["england_epl/2015-2016/2015-10-03 - 17-00 Manchester City 6 - 1 Newcastle Utd: Labels-v2.json (17 action classes, no pass or reception) and Labels-cameras.json (13 camera classes; the game is among the 200 with complete camera-change labels, train split of that task)."]
+verified_url = "https://huggingface.co/datasets/SoccerNet/SN-Labels"
+verified_on = "2026-10-21"
+notes = "Label files are never redistributed (no_share, matching src/gbf/events/pins.toml). Used to align StatsBomb events to the half videos and to compute the main-camera share of shot times before any video arrives (prereg/gates.v1.json). Publishing aggregates stays blocked until the terms are clarified."
+
+[[datasets]]
+id = "soccernet-raw-hq"
+name = "SoccerNet broadcast videos (SoccerNet_raw_HQ)"
+kind = "broadcast_video"
+status = "planned"
+acquisition = "after_approval"
+license = "LicenseRef-SoccerNet-NDA"
+rights_source = "SoccerNet NDA signed electronically on Hugging Face and approved manually, separately for each repository; the counterparty is KAUST. Copyright in the footage stays with the leagues and broadcasters."
+restrictions = ["nda"]
+allowed_uses = ["local_processing", "evaluation", "fitting"]
+aggregate_publication = "unverified"
+committable = false
+subset = ["england_epl/2015-2016/2015-10-03 - 17-00 Manchester City 6 - 1 Newcastle Utd (valid split): the demo match."]
+clauses = [
+  { ref = "Access form", summary = "Research and non-commercial use only; the videos are copyrighted; do not share them with anyone.", handling = "Tag nda on the videos and on every per-item derivative (detections, tracks, skeletons, crops); never published or uploaded." },
+  { ref = "3.c", summary = "Disclosure only to representatives, advisers or subcontractors bound by equivalent confidentiality, or with written authorisation (not re-checked).", handling = "Local processing by default. Kaggle only with the maintainer's approval, no objection from SoccerNet and the NDA job rules of ADR 0002; question 1 of the e-mail in docs/data-access.md asks about cloud processing." },
+  { ref = "Term", summary = "Confidentiality obligations last 2 years; Saudi law governs (pages 2-3 were not re-read; taken from the research record).", handling = "The NDA-derivatives inventory in docs/data-access.md is counted before P5 and before expiry." },
+]
+verified_url = "https://huggingface.co/datasets/SoccerNet/SoccerNet_raw_HQ"
+verified_on = "2026-10-21"
+notes = "224p (398x224) and 720p (1280x720), both 25 fps; resolution of the HQ originals not verified. On arrival check resolution, frame rate and frame count with ffprobe, then field_order and idet (2015 broadcasts may be interlaced). Keep the video directory outside synced folders. Questions 2 and 3 of the e-mail ask whether derived skeletons and coordinates may be published and whether watermarked private demos may be shown to named people."
+
+[[datasets]]
+id = "soccernet-gsr-2025"
+name = "SoccerNet Game State Reconstruction 2025 (SN-GSR-2025)"
+kind = "video_with_tracking_labels"
+status = "planned"
+acquisition = "download"
+license = "GPL-3.0-only"
+rights_source = "Hugging Face dataset card (gated=false) labels the dataset gpl-3.0. The footage comes from 2019 Swiss Super League broadcasts and belongs to the league or broadcaster; the GPL label is not a grant of rights in that footage."
+restrictions = []
+allowed_uses = ["local_processing", "cloud_processing", "evaluation", "fitting", "publish_aggregates"]
+aggregate_publication = "allowed"
+committable = false
+verified_url = "https://huggingface.co/datasets/SoccerNet/SN-GSR-2025"
+verified_on = "2026-10-21"
+notes = "Publish numbers only, never frames. By default it does not train weights meant for release, and commercial builds do not use parameters fitted on it (ADR 0002 rule 3). 1920x1080, 25 fps, 30 s clips (750 frames); public labels for 57 train, 59 valid and 50 test clips plus a challenge set without public ground truth; archives train 9.8 GB, valid 11.2 GB, test 8.8 GB: extract only sampled clips. Single main camera, no cuts, ball removed from the labels; ground-truth positions are box bottoms projected with camera parameters computed from annotated line points, so frames with few lines may be poorly calibrated. Whether the test archive contains labels is unverified. Split and protocol: prereg/gates.v1.json."
+
+[[datasets]]
+id = "soccernet-tracking"
+name = "SoccerNet-Tracking"
+kind = "video_with_tracking_labels"
+status = "planned"
+acquisition = "none"
+license = "NOASSERTION"
+rights_source = "Not verified: whether the download requires an NDA has not been checked. The related code repository (SoccerNet/sn-tracking) declares no licence."
+restrictions = ["nda"]
+allowed_uses = []
+aggregate_publication = "unverified"
+committable = false
+verified_url = "https://github.com/SoccerNet/sn-tracking"
+verified_on = "2026-10-21"
+notes = "Provisionally treated as NDA data and not used until the access conditions are verified; then update this entry. 200 clips of 30 s spread evenly over 11 action classes (shots are one class); the ball is a labelled class (297 ball tracks, about 215,000 ball boxes); 12 main-camera games; 11.5% of boxes are interpolated. Planned use: contact-frame ground truth from turning points of ball tracks, at 1080p and downscaled to 720p (plan 5.3)."
+
+[[datasets]]
+id = "worldpose"
+name = "WorldPose (ETH Zurich AIT; 2022 World Cup 3D poses)"
+kind = "pose_3d"
+status = "planned"
+acquisition = "after_approval"
+license = "LicenseRef-WorldPose-Terms"
+rights_source = "ETH Zurich academic terms accepted with the application; the broadcast video is licensed separately by FIFA under the FIFA Content T&Cs, sent only after applying. The challenge page states CC BY-NC-SA, which conflicts with the ETH terms: the terms actually signed prevail."
+restrictions = ["research_nc", "no_identity"]
+allowed_uses = ["local_processing", "evaluation", "fitting"]
+aggregate_publication = "unverified"
+committable = false
+clauses = [
+  { ref = "Use", summary = "Non-commercial academic use only.", handling = "Tag research_nc; anything fitted on it goes into plugin-research-nc." },
+  { ref = "Training", summary = "No training of models for commercial use.", handling = "Commercial builds never use parameters fitted on it (ADR 0002 rule 3)." },
+  { ref = "Redistribution", summary = "No redistribution, including converted model parameters.", handling = "Never committed or uploaded; fitted tables and networks stay in plugin-research-nc." },
+  { ref = "Identity", summary = "No identity recognition and no identity linking.", handling = "Tag no_identity: plugins switch off ReID, jersey OCR and event-to-identity binding (gate G19); publishing refuses identity fields; action strata use pose-derived labels only, never StatsBomb or PFF events." },
+  { ref = "Termination", summary = "ETH may end access at any time.", handling = "Copies are listed so they can be deleted." },
+]
+verified_url = "https://eth-ait.github.io/WorldPoseDataset/"
+verified_on = "2026-10-21"
+notes = "Main route to external 3D ground truth. Its ground truth is 66-80 mm from Vicon, so no claim can be finer. Whether aggregates may be published is checked clause by clause after the terms arrive."
+
+[[datasets]]
+id = "fifa-skeletal-tracking-light-2026"
+name = "FIFA Skeletal Tracking Light 2026 (Hugging Face inputs, Codabench challenge)"
+kind = "pose_3d"
+status = "rejected"
+acquisition = "none"
+license = "LicenseRef-FIFA-STL-2026-Terms"
+rights_source = "Hugging Face application (auto-approved; shares the applicant's user name and e-mail with the dataset authors) plus FIFA competition terms. The licence tag says cc-by-2.0 while the page says non-commercial only; the FIFA Content T&Cs, which are not public, prevail in a conflict."
+restrictions = ["research_nc", "no_identity"]
+allowed_uses = []
+aggregate_publication = "not_allowed"
+committable = false
+reasons = [
+  "The Hugging Face data holds inputs only for 20 sequences (6 validation, 14 test): boxes, cameras with first-frame extrinsics only, and 25-joint skeletons estimated by SAM 3D Body. There is no video and no ground truth, so even the starter-kit baseline cannot run.",
+  "Ground truth sits on the Codabench evaluation server; the test portal closed on 2026-04-30 (the validation portal is still open).",
+  "Competition terms 9.a transfer all intellectual property in entries (results, algorithms, technical reports) to FIFA, which conflicts with releasing our own algorithms as open source; 8.c does not accept AI-generated work.",
+  "Training-grade 3D ground truth is available through the WorldPose application, so it adds nothing.",
+]
+clauses = [
+  { ref = "9.a", summary = "Entries' intellectual property (results, algorithms, technical reports) transfers to FIFA.", handling = "Do not apply and do not submit to Codabench." },
+  { ref = "8.c", summary = "AI-generated work is not accepted.", handling = "Not applicable: not applying." },
+]
+verified_url = "https://huggingface.co/datasets/tijiang13/FIFA-Skeletal-Tracking-Light-2026"
+verified_on = "2026-10-21"
+notes = "82 files, 723 MB: boxes, cameras, 2D and 3D skeletons only (appendix B F1-F4)."
+
+[[datasets]]
+id = "idsse"
+name = "IDSSE: integrated spatiotemporal and event data in elite soccer (Bassek et al. 2025)"
+kind = "events_and_tracking"
+status = "planned"
+acquisition = "download"
+license = "CC-BY-4.0"
+rights_source = "CC BY 4.0, published with the dataset under DFL's authorisation (DFL official event data and TRACAB Gen5 optical tracking)."
+restrictions = []
+allowed_uses = ["local_processing", "cloud_processing", "evaluation", "fitting", "smoke_testing", "publish_aggregates", "publish_analysis", "redistribute", "commercial", "third_party_services"]
+aggregate_publication = "allowed"
+committable = true
+attribution = "Bassek et al. (2025), Scientific Data, doi:10.1038/s41597-025-04505-y; data doi:10.6084/m9.figshare.28196177; licensed CC BY 4.0 (DFL event data and TRACAB tracking). Confirm the full citation on the dataset page before the first publication."
+verified_url = "https://doi.org/10.6084/m9.figshare.28196177"
+verified_on = "2026-10-21"
+notes = "2022/23 Bundesliga (2 matches) and 2. Bundesliga (5 matches); official events plus optical tracking at about 25 Hz, XML; 207 players, 11,137 events, 1,002,644 frames; 171 shots with official xG; no video (copyright). Readable with kloppy's sportec module. CI fixtures, evidence-layer unit tests and the first public round (P2a). Small slices may be committed with the attribution."
+
+[[datasets]]
+id = "wyscout-public"
+name = "Wyscout public match event dataset (Pappalardo et al. 2019)"
+kind = "events"
+status = "planned"
+acquisition = "download"
+license = "CC-BY-4.0"
+rights_source = "CC BY 4.0 as published on figshare by the dataset authors."
+restrictions = []
+allowed_uses = ["local_processing", "cloud_processing", "evaluation", "fitting", "smoke_testing", "publish_aggregates", "publish_analysis", "redistribute", "commercial", "third_party_services"]
+aggregate_publication = "allowed"
+committable = true
+attribution = "Pappalardo et al. (2019), Scientific Data, doi:10.1038/s41597-019-0247-7; data on figshare (collection 4415000); licensed CC BY 4.0. Confirm the full citation on the dataset page before the first publication."
+verified_url = "https://figshare.com/collections/Soccer_match_event_dataset/4415000"
+verified_on = "2026-10-21"
+notes = "2017/18 seasons of the five major leagues, 2018 World Cup and Euro 2016: 1,941 matches, 3,251,294 events, 4,299 players; JSON; no xG and no video; no games in common with SoccerNet. Event-format tests and, if needed, publishable xT/VAEP weights."
+
+[[datasets]]
+id = "skillcorner-opendata"
+name = "SkillCorner open data (A-League 2024/25 broadcast tracking; body-pose subset)"
+kind = "tracking"
+status = "planned"
+acquisition = "download"
+license = "MIT"
+rights_source = "MIT licence (Copyright 2020 SkillCorner) in the GitHub repository; the Hugging Face card of the body-pose data says mit (checked by reviewer 3, not re-checked in appendix B). The MIT text speaks of 'Software', so whether it covers data is ambiguous."
+restrictions = []
+allowed_uses = ["local_processing", "cloud_processing", "smoke_testing", "publish_aggregates", "redistribute"]
+aggregate_publication = "allowed"
+committable = true
+attribution = "Data: SkillCorner open data, MIT licence, Copyright 2020 SkillCorner. Ship the MIT notice with any slice and name SkillCorner as the source."
+verified_url = "https://github.com/SkillCorner/opendata"
+verified_on = "2026-10-21"
+notes = "Small slices only, for metric-code smoke tests and order-of-magnitude comparisons: the data is estimated from broadcast, not ground truth. 10 fps broadcast tracking (the repository says 10 matches; 20 match folders were found) plus 2 matches of 29-joint, 25 fps body pose (about 3.3 GB per match; Hugging Face SkillCorner/opendata-bodypose). Players are identifiable real people: public content never evaluates individual players. Commercial use and fitting are left out while the data scope of the MIT text is ambiguous."
+
+[[datasets]]
+id = "roboflow-football-datasets"
+name = "Roboflow Universe football-players-detection, football-field-detection and football-ball-detection"
+kind = "images"
+status = "blocked"
+acquisition = "none"
+license = "LicenseRef-DFL-Competition-Use-Only"
+rights_source = "The frames come from the DFL - Bundesliga Data Shootout competition on Kaggle (the roboflow/sports README names the source). The CC BY 4.0 shown on Roboflow Universe was applied by the uploader; no separate DFL authorisation was found."
+restrictions = []
+allowed_uses = []
+aggregate_publication = "not_allowed"
+committable = false
+reasons = [
+  "Competition rule 7.A: competition use only; the data may not be used after the competition and must be deleted.",
+  "Competition rule 7.B: the data may not be given to anyone who did not take part.",
+  "The CC BY 4.0 label on Roboflow Universe is the uploader's own; a platform label is not a rights source.",
+]
+clauses = [
+  { ref = "7.A", summary = "Competition use only; stop using and delete the data after the competition.", handling = "Not used for training, evaluation or distribution; registered as source-restricted so the gate refuses it." },
+  { ref = "7.B", summary = "No provision of the data to non-participants.", handling = "Never downloaded or shared." },
+]
+verified_url = "https://www.kaggle.com/competitions/dfl-bundesliga-data-shootout/rules"
+verified_on = "2026-10-21"
+notes = "Also blocks the three ultralytics-trained example weights of roboflow/sports (registries/models.toml). The P5 detector uses COCO-pretrained RF-DETR without fine-tuning on DFL-derived data."
+
+[[datasets]]
+id = "private-dev-clip"
+name = "Private development clip (67 s Premier League broadcast excerpt)"
+kind = "broadcast_video"
+status = "local_only"
+acquisition = "local_only"
+license = "NONE"
+rights_source = "None: a 67-second excerpt of a Stan Sport broadcast received through a messaging app; gbf holds no licence. Kept on the maintainer's machine for local regression tests only."
+restrictions = ["no_share"]
+allowed_uses = ["local_processing", "evaluation", "smoke_testing"]
+aggregate_publication = "unverified"
+committable = false
+verified_on = "2026-10-21"
+notes = "1920x1080, 25 fps; five hard cuts (prereg/README.md, erratum E1, gives their count and the weakest margin, and the sha256 of the private file that lists them); a 1,681-frame archive and 100 manual track labels (43 and 42 per team, 9 others, 6 two-people boxes) stay outside the repository. No event data can lawfully be paired with it. Never uploaded again to any service; whether the copy uploaded earlier to a private cloud dataset is deleted is the maintainer's decision (plan section 10). Besides its sha256 and integer regression thresholds (for example 82/85 tracks), aggregate statistics measured on it (medians, ratios, thresholds) appear in the repository as the provenance of tuned parameters, in docs/design/m1-highlights.md (\"Tuned parameters\") and in code docstrings (ADR 0002, amendment of 2026-10-21)."
+
+[[datasets]]
+id = "synthetic-l0"
+name = "Synthetic frames and labels generated by gbf (L0 smoke video, pitch-keypoint training renders)"
+kind = "synthetic"
+status = "planned"
+acquisition = "generated"
+license = "MIT"
+rights_source = "Generated by gbf's own code (MIT); no third-party rights involved."
+restrictions = []
+allowed_uses = ["local_processing", "cloud_processing", "evaluation", "fitting", "smoke_testing", "publish_aggregates", "publish_analysis", "publish_media", "redistribute", "commercial", "third_party_services"]
+aggregate_publication = "allowed"
+committable = false
+verified_on = "2026-10-21"
+notes = "Generated at test time and not committed; a generated image that must be tracked (for example a golden frame) is registered in registries/media.toml. One of the sources commercial builds may fit parameters on (ADR 0002 rule 3)."
