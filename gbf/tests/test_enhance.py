@@ -90,3 +90,35 @@ def test_clean_tracks_counts() -> None:
     assert cleaned["jersey"].isna().all()
     assert counts["pieces_renamed"] == 1
     assert counts["rows_with_jersey_after"] == 0
+
+
+def test_clean_tracks_judges_a_reentered_piece_on_its_own() -> None:
+    # Track 5 is read as "9" until it runs out of the picture at the right edge; the box the
+    # tracker calls 5 after the gap is read as "4" twice only: too few reads of its own, so
+    # it keeps no jersey rather than the "9" of the player who had the id before.
+    edge, middle = (1250.0, 300.0, 1279.0, 380.0), (600.0, 300.0, 630.0, 380.0)
+    frames = [0, 1, 2, 3, 4, 30, 31]
+    boxes = [middle] * 4 + [edge, middle, middle]
+    tracks = pd.DataFrame(
+        {
+            "frame": frames,
+            "track_id": [5] * 7,
+            **{name: [b[k] for b in boxes] for k, name in enumerate(("x1", "y1", "x2", "y2"))},
+            "jersey": ["9"] * 5 + ["4", "4"],
+            "jersey_conf": [0.95] * 7,
+        }
+    )
+    shots = pd.DataFrame({"shot_id": [0], "start_frame": [0], "end_frame": [99]})
+    cleaned, counts = enhance.clean_tracks(tracks, shots, frame_size=(1280, 720), fps=25.0)
+    assert cleaned["track_id"].tolist() == [5] * 5 + [100_005] * 2
+    assert cleaned["jersey"].iloc[:5].tolist() == ["9"] * 5
+    assert cleaned["jersey"].iloc[5:].isna().all()
+    assert counts["pieces_split_at_reentry"] == 1
+    assert counts["pieces_split_at_cuts"] == 0
+    assert counts["reentry_pieces"] == [
+        {"track_id": 100_005, "source_track_id": 5, "start_frame": 30, "gap_frames": 25}
+    ]
+    # Without the frame size the track stays whole and the majority "9" covers every row.
+    whole, _ = enhance.clean_tracks(tracks, shots)
+    assert whole["track_id"].tolist() == [5] * 7
+    assert whole["jersey"].tolist() == ["9"] * 7

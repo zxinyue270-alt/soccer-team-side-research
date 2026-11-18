@@ -295,6 +295,18 @@ def test_track_has_the_contract_columns(scene: Scene, tracked: pd.DataFrame) -> 
     assert tracked["candidate_count"].tolist() == expected_counts
 
 
+def test_tracking_can_return_the_actual_candidate_gates_without_changing_track(
+    scene, tracked, gates
+):
+    from gbf import ball
+
+    actual, candidates = ball.track_ball_with_candidates(
+        scene.candidates, scene.tracks, scene.calib, scene.shots, FPS, scene.n_frames
+    )
+    pd.testing.assert_frame_equal(actual, tracked, check_exact=True)
+    pd.testing.assert_frame_equal(candidates, gates, check_exact=True)
+
+
 def test_track_follows_the_true_ball(scene: Scene, tracked: pd.DataFrame) -> None:
     dropped = set(GAP_SHORT + GAP_LONG + BEFORE_CUT + GAP_B)
     for frame, (u, v) in scene.truth.items():

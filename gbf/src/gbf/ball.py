@@ -147,6 +147,7 @@ __all__ = [
     "gate_candidates",
     "load_candidates",
     "track_ball",
+    "track_ball_with_candidates",
 ]
 
 DETECTED = "detected"
@@ -1767,11 +1768,33 @@ def track_ball(
     The method is described in the module docstring. Raises BallInputError listing every
     input problem.
     """
+    track, _gates = track_ball_with_candidates(
+        candidates, tracks, calib, shots, fps, n_frames, frame_size=frame_size, params=params
+    )
+    return track
+
+
+def track_ball_with_candidates(
+    candidates: Mapping[int, Any],
+    tracks: pd.DataFrame,
+    calib: pd.DataFrame,
+    shots: pd.DataFrame,
+    fps: float | str | Fraction,
+    n_frames: int,
+    *,
+    frame_size: tuple[int, int] | None = None,
+    params: BallParams = DEFAULT_PARAMS,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return the unchanged track and all raw candidates with their actual gate verdicts.
+
+    The second table follows GATE_COLUMNS. A single passing candidate is evidence of
+    gate uniqueness, not verified ball identity or a calibrated confidence score.
+    """
     ctx = _prepare(
         "track_ball", candidates, tracks, calib, shots, fps, n_frames, frame_size, params
     )
-    track, _gates, _links = _track(ctx)
-    return track
+    track, gates, _links = _track(ctx)
+    return track, gates
 
 
 def _track(ctx: _Context) -> tuple[pd.DataFrame, pd.DataFrame, dict[int, int]]:

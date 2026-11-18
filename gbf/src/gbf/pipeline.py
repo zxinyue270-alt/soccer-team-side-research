@@ -33,9 +33,8 @@ report     report.html with the score timeline (gbf.report)        report.html, 
 
 Re-running
     A stage is skipped when its receipt's key -- the sha256 of the stage name, the sha256 of
-    every input file, the stage's parameters and a fingerprint of the code: every .py file
-    of the gbf package this code runs from (gbf.gate and gbf.web left out, they never run
-    in a stage), so any code change re-runs every stage -- equals the current key, and
+    every input file, the stage's parameters and its code dependencies (including shared
+    orchestration, IO and transitive local imports) -- equals the current key, and
     every output the receipt lists still has its recorded sha256. Measure also hashes
     registries/metrics.toml, where its tiers come from. ``--force`` runs the selected
     stages anyway. Stages left out of ``--stages`` are never run: their outputs must exist.
@@ -52,11 +51,22 @@ Conventions and rules
     ADR 0002); renders get the watermark 私有素材 · 禁止分享 when no_share or nda is among
     them. The output directory must lie outside every git work tree, the gbf checkout
     included. Receipts and run.json hold file names and run-relative paths only.
+
+Relink (``--relink``, off by default)
+    With a mode on, the import stage also reads the export's ``embeddings.npz`` (when its
+    receipt lists it) into ``import/embeddings.parquet``, and the refine stage ends with
+    gbf.relink: tracks are cut where the tracker changed person and the pieces of one person
+    are joined. ``refine/tracks.parquet`` then holds the new ids in ``track_id`` and the ids
+    from before in a last column ``piece_id``; ``refine/refine.json`` gets a ``relink``
+    section and the report a note. A run that reads the embeddings carries the tags of
+    RELINK_RESTRICTIONS (source ``relink`` in run.json). With ``off`` none of this runs and
+    every import and refine artifact has the bytes it had before the step existed.
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import inspect
 import json
@@ -66,7 +76,7 @@ import re
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import closing
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
@@ -94,12 +104,14 @@ from gbf import lift3d as lift_mod
 from gbf import measure as measure_mod
 from gbf import moments as moments_mod
 from gbf import pose as pose_mod
+from gbf import relink as relink_mod
 from gbf import render as render_mod
 from gbf import report as report_mod
 from gbf import role_check as role_check_mod
 from gbf import shots_grammar as shots_mod
 from gbf import side_check as side_check_mod
 from gbf import sngs_import as import_mod
+from gbf import stitch as stitch_mod
 from gbf import team_check as team_check_mod
 from gbf import track_tools as track_tools_mod
 from gbf.ingest import cuts as cuts_mod
@@ -133,6 +145,15 @@ TRACKS = "refine/tracks.parquet"
 """Track table every stage after ``refine`` reads (ids split at cuts, refitted positions)."""
 CALIB = "refine/calib.parquet"
 """Calibration every stage after ``refine`` reads."""
+EMBEDDINGS = "import/embeddings.parquet"
+"""Appearance embeddings aligned to the import's track rows; written only when ``--relink``
+is on and the plugin export carries them."""
+RELINK_RESTRICTIONS: tuple[str, ...] = ("hl3",)
+"""Tags of every run whose relink step reads the export's embeddings (source ``relink`` of
+run.json's ``restriction_sources``). The step is built for the embeddings of the plugin's
+re-identification model PRTReid, and its parameters were fitted with such embeddings: both
+are ``hl3`` (ADR 0002, the tag's row and rule 3). The exporter is to tag such an export
+``hl3`` itself, but it lives outside this repository, so the run does not depend on it."""
 FINAL = "highlights_final.json"
 """Highlights after key moments and ranking; measure, render and report read this one."""
 
@@ -253,6 +274,10 @@ class PipelineConfig:
         rep_err_max_px: pitch-usable calibration limit for the import, pixels.
         refine_calibration: refit the calibration from the plugin's pitch keypoints when
             the export has them (gbf.calib_refine); False keeps the plugin's per-frame fits.
+        relink: "off" (the default), or a mode of gbf.relink: the refine stage then cuts
+            tracks where the tracker changed person and joins the pieces of one person, from
+            the export's appearance embeddings (skipped with a note when there are none). A
+            run that reads the embeddings carries RELINK_RESTRICTIONS.
         labels: optional labels of the clip (gbf.label_eval); the report then compares
             the highlights with them.
         pose_estimator: a ready gbf.pose.PoseEstimator (tests pass one with a fake runner);
@@ -281,6 +306,7 @@ class PipelineConfig:
     audio_offset_s: float = 0.0
     rep_err_max_px: float = import_mod.DEFAULT_REP_ERR_MAX_PX
     refine_calibration: bool = True
+    relink: str = "off"
     labels: Path | None = None
     pose_estimator: Any = None
     repo_root: Path | None = None
@@ -410,10 +436,7 @@ def _utc_now() -> str:
 
 
 def _source_fingerprint(package: Path) -> str:
-    """sha256 over every .py file of the gbf package at ``package``, by its path inside the
-    package and the sha256 of its bytes, :data:`SOURCE_LEFT_OUT` left out. Every stage key
-    holds it, so an edit anywhere in the code the pipeline runs (a helper, a constant, a
-    module no stage names) re-runs every stage instead of keeping outputs of older code."""
+    """Full source provenance, independent of the narrower per-stage cache key."""
     files = {}
     for path in sorted(package.rglob("*.py")):
         relative = path.relative_to(package)
@@ -422,10 +445,96 @@ def _source_fingerprint(package: Path) -> str:
     return canonical_sha256(files)
 
 
+def _stage_sources(
+    package: Path, stage: _Stage, *, cache: dict[str, Any] | None = None
+) -> dict[str, str]:
+    """Hash stage modules and their static local import closure without importing code.
+
+    Whole pipeline/IO/contracts are shared conservatively. Parent package initializers
+    execute on import too. Dynamic imports fall back to all package source files.
+    """
+    # A run snapshots source once. Do not use a global cache: the next run must see edits.
+    cache = {} if cache is None else cache
+    if "available" not in cache:
+        cache["available"] = {
+            "gbf."
+            + p.relative_to(package)
+            .with_suffix("")
+            .as_posix()
+            .replace("/", ".")
+            .removesuffix(".__init__"): p
+            for p in package.rglob("*.py")
+            if p.relative_to(package).parts[0] not in SOURCE_LEFT_OUT
+        }
+    available = cache["available"]
+    available["gbf"] = package / "__init__.py"
+    available.pop("gbf.__init__", None)
+    pending = {"gbf", "gbf.pipeline"}
+    # Shared helpers used throughout _Run and the stage wrappers.
+    pending.update(
+        name
+        for name in available
+        if name.startswith(("gbf.util.", "gbf.ingest.", "gbf.contracts", "gbf.plugins"))
+    )
+    pending.update(
+        part.__name__ if isinstance(part, ModuleType) else part.__module__ for part in stage.modules
+    )
+    visited: set[str] = set()
+    while pending:
+        name = pending.pop()
+        if name in visited or name not in available:
+            continue
+        visited.add(name)
+        pieces = name.split(".")
+        pending.update(".".join(pieces[:i]) for i in range(1, len(pieces)))
+        # The pipeline's imports aggregate all stages; its own bytes are shared, but
+        # stage.modules selects the algorithm roots instead of traversing this hub.
+        if name == "gbf.pipeline":
+            continue
+        file = available[name]
+        dependencies = cache.setdefault("dependencies", {})
+        if name in dependencies:
+            pending.update(dependencies[name])
+            continue
+        local: set[str] = set()
+        tree = ast.parse(file.read_bytes(), filename=str(file))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                called = node.func
+                if (
+                    isinstance(called, ast.Name) and called.id in {"__import__", "import_module"}
+                ) or (isinstance(called, ast.Attribute) and called.attr == "import_module"):
+                    local.update(available)
+            elif isinstance(node, ast.Import):
+                local.update(alias.name for alias in node.names)
+                if any(alias.name.split(".")[0] == "importlib" for alias in node.names):
+                    local.update(available)
+            elif isinstance(node, ast.ImportFrom):
+                base = node.module or ""
+                if base.split(".")[0] == "importlib":
+                    local.update(available)
+                if node.level:
+                    parent = pieces if file.name == "__init__.py" else pieces[:-1]
+                    base = ".".join(
+                        parent[: len(parent) - node.level + 1] + ([base] if base else [])
+                    )
+                local.add(base)
+                local.update(base + "." + alias.name for alias in node.names)
+        dependencies[name] = local
+        pending.update(local)
+    files = {available[name] for name in visited}
+    files.update((package / "contracts").rglob("*.json"))
+    hashes = cache.setdefault("hashes", {})
+    for file in files:
+        if file not in hashes:
+            hashes[file] = sha256_file(file)
+    return {p.relative_to(package).as_posix(): hashes[p] for p in sorted(files)}
+
+
 def _fingerprint(function: Callable[..., Any], parts: Sequence[Any]) -> str:
     """sha256 over a stage function's source and the code it names: whole source files for
-    modules, the source of single functions or classes otherwise. The run's source
-    fingerprint (:func:`_source_fingerprint`) covers every other module and helper."""
+    modules, the source of single functions or classes otherwise. Transitive dependencies
+    are additionally covered by :func:`_stage_sources`."""
     digest = hashlib.sha256()
     digest.update(inspect.getsource(function).encode("utf-8"))
     for part in parts:
@@ -518,6 +627,8 @@ class _Stage:
     parameters: Callable[[_Run], dict[str, Any]]
     scope: str
     limitations: tuple[str, ...]
+    run_limitations: Callable[[_Run], tuple[str, ...]] | None = None
+    """Limitations that hold only for some settings of a run; listed after the fixed ones."""
 
 
 class _Run:
@@ -530,6 +641,9 @@ class _Run:
         self._hashes: dict[str, tuple[int, int, str]] = {}
         self.code = code_version()
         self.source = _source_fingerprint(_SOURCE_DIR)
+        self.stage_sources: dict[str, dict[str, str]] = {}
+        self.source_cache: dict[str, Any] = {}
+        self.profile: dict[str, dict[str, Any]] = {}
         self.results: list[StageResult] = []
         self.notes: list[str] = []
         self.video = Path(config.video)
@@ -640,10 +754,20 @@ class _Run:
 # --------------------------------------------------------------------------- stage bodies
 
 
+def _wants_embeddings(run: _Run) -> bool:
+    """Whether the import reads the export's embeddings: only for a relink mode that is on,
+    and never for a run that must not link identities (ADR 0002, no_identity)."""
+    return run.config.relink != "off" and "no_identity" not in run.restrictions
+
+
 def _stage_import(run: _Run) -> list[str]:
     target = run.path("import")
     summary = import_mod.import_sngs(
-        run.sngs, target, rep_err_max_px=run.config.rep_err_max_px, overwrite=True
+        run.sngs,
+        target,
+        rep_err_max_px=run.config.rep_err_max_px,
+        overwrite=True,
+        embeddings=_wants_embeddings(run),
     )
     if summary.n_frames != run.n_frames:
         raise PipelineError(
@@ -655,8 +779,13 @@ def _stage_import(run: _Run) -> list[str]:
         )
     # The tables are per-item derivatives of the video too: they carry the run's tags
     # (the plugin's plus --restrictions), not only the plugin's.
+    outputs = ["import/tracks.parquet", "import/calib.parquet", "import/import.json"]
+    tables = ["import/tracks.parquet", "import/calib.parquet"]
+    if summary.embeddings_path is not None:
+        outputs.append(EMBEDDINGS)
+        tables.append(EMBEDDINGS)
     if set(summary.restrictions) != set(run.restrictions):
-        for name in ("import/tracks.parquet", "import/calib.parquet"):
+        for name in tables:
             _write_table(pq.read_table(run.path(name)), run.path(name), run.restrictions)
         report = read_json(run.path("import/import.json"))
         report["plugin_restrictions"] = report.get("restrictions")
@@ -668,7 +797,9 @@ def _stage_import(run: _Run) -> list[str]:
         "pitch_usable_frames": summary.n_pitch_usable_frames,
         "plugin_restrictions": list(summary.restrictions),
     }
-    return ["import/tracks.parquet", "import/calib.parquet", "import/import.json"]
+    if run.config.relink != "off":
+        run.result_extras["import"]["embedding_rows"] = summary.counts.get("embedding_rows")
+    return outputs
 
 
 def _stage_shots(run: _Run) -> list[str]:
@@ -699,7 +830,17 @@ def _stage_shots(run: _Run) -> list[str]:
 
 def _stage_refine(run: _Run) -> list[str]:
     shots = run.table("shots.parquet")
-    tracks, counts = enhance_mod.clean_tracks(run.import_tracks(), shots)
+    facts = run.facts
+    imported = run.import_tracks()
+    tracks, counts = enhance_mod.clean_tracks(
+        imported,
+        shots,
+        frame_size=(facts.width, facts.height) if facts is not None else None,
+        fps=float(facts.fps) if facts is not None else None,
+    )
+    reads = stitch_mod.raw_reads(imported, tracks)
+    if counts["pieces_split_at_reentry"]:
+        run.notes.append(_reentry_note(counts))
     calib = run.import_calib()
     report: dict[str, Any] | None = None
     if run.config.refine_calibration:
@@ -709,7 +850,13 @@ def _stage_refine(run: _Run) -> list[str]:
         )
     tracks, teams = _check_team_labels(run, tracks)
     tracks, roles = _check_role_labels(run, tracks)
+    stitches = _audit_stitches(run, tracks, calib, shots, teams, roles, reads)
     sides = _check_sides(run, tracks)
+    relink: dict[str, Any] | None = None
+    if run.config.relink != "off":
+        # last: every report above describes the ids from before (piece_id in the table)
+        with closing(iter_frames(run.video)) as frames:
+            tracks, relink = _relink(run, tracks, calib, shots, frames=frames)
     run.write(tracks, TRACKS)
     run.write(calib, CALIB)
     summary = {
@@ -718,6 +865,7 @@ def _stage_refine(run: _Run) -> list[str]:
         "tracks": counts,
         "teams": teams,
         "roles": roles,
+        "stitch_audit": stitches,
         "sides": sides,
         "calibration": report
         or {
@@ -728,11 +876,14 @@ def _stage_refine(run: _Run) -> list[str]:
         },
         "restrictions": list(run.restrictions),
     }
+    if relink is not None:
+        summary["relink"] = relink
     _json_write(run.path("refine/refine.json"), summary)
     run.result_extras["refine"] = {
-        "tracks": counts,
+        "tracks": {key: value for key, value in counts.items() if key != "reentry_pieces"},
         "teams": teams["counts"],
         "roles": {key: roles[key] for key in ("verdict", "crowded_share", "rows_cleared")},
+        "stitch_audit": stitches["counts"],
         "sides": {
             key: sides[key]
             for key in ("verdict", "attack_direction_known", "difference_m", "interval_m")
@@ -741,9 +892,183 @@ def _stage_refine(run: _Run) -> list[str]:
         "holdout": (report or {}).get("holdout"),
         "ground_jitter": (report or {}).get("ground_jitter"),
     }
+    if relink is not None:
+        run.result_extras["refine"]["relink"] = {
+            key: relink.get(key) for key in ("mode", "applied", "reason", "counts")
+        }
     if report is not None:
         run.notes.append(_refine_note(report, shots))
     return [TRACKS, CALIB, "refine/refine.json"]
+
+
+def _relink(
+    run: _Run,
+    tracks: pd.DataFrame,
+    calib: pd.DataFrame,
+    shots: pd.DataFrame,
+    *,
+    frames: Iterable[tuple[int, np.ndarray]] | None = None,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """The relink step (gbf.relink) on the refine stage's final tables: cut tracks where the
+    tracker changed person and join the pieces of one person.
+
+    Returns the track table with the new ids (``track_id``; the ids from before in a new
+    last column ``piece_id``) and the ``relink`` section of refine.json, and adds the report
+    note. The step is skipped, with its reason in the section and the note, when the run
+    must not link identities (no_identity), the import wrote no embeddings or no row of them
+    holds one, the calibration table names no single frame size or a track id is too large
+    to be cut; the table then only gains ``piece_id``. Embeddings that do not describe the
+    table's rows are an error, never a silent misalignment.
+
+    The frame size that scales the method's pixel constants is the calibration table's
+    (``width``, ``height``): the boxes and the cameras are in that grid, whatever the size of
+    the video file. The section also names the embeddings (``embeddings``: the model the
+    plugin receipt gives and the dimension), as the import recorded them.
+    """
+    mode = run.config.relink
+    path = run.path(EMBEDDINGS)
+    size = _calib_frame_size(calib)
+    reason: str | None = None
+    if "no_identity" in run.restrictions:
+        reason = "no_identity"
+    elif not path.is_file():
+        reason = "no_embeddings"
+    elif size is None:
+        reason = "no_frame_size"
+    elif len(tracks) and int(tracks["track_id"].max()) >= relink_mod.cuts.SUB_STRIDE:
+        reason = "track_ids_out_of_range"
+    if reason is not None or size is None:
+        section = relink_mod.skipped(mode, reason or "no_frame_size")
+        run.notes.append(_relink_note(section))
+        return relink_mod.apply_ids(tracks, None), section
+    frame, source, embeddings = import_mod.load_embeddings(path)
+    problems: list[str] = []
+    if len(frame) != len(tracks):
+        problems.append(f"{EMBEDDINGS} has {len(frame)} rows but the track table has {len(tracks)}")
+    else:
+        if not np.array_equal(frame, tracks["frame"].to_numpy(dtype=np.int64)):
+            problems.append(f"{EMBEDDINGS}: frame differs from the track table's rows")
+        if "source_track_id" not in tracks.columns:
+            problems.append("the track table has no source_track_id column")
+        elif not np.array_equal(source, tracks["source_track_id"].to_numpy(dtype=np.int64)):
+            problems.append(f"{EMBEDDINGS}: track_id differs from the table's source_track_id")
+    if problems:
+        raise PipelineError("refine", problems)
+    if len(tracks) and not relink_mod.inputs.has_embedding(embeddings).any():
+        # nothing to judge appearance by: say so instead of reporting a step that ran
+        section = relink_mod.skipped(mode, "no_embeddings")
+        section["rows_without_embedding"] = len(tracks)
+        run.notes.append(_relink_note(section))
+        return relink_mod.apply_ids(tracks, None), section
+    try:
+        shirt_lab = (
+            None
+            if frames is None
+            else relink_mod.measure_shirt_colours(tracks, frames, frame_size=size)
+        )
+        result = relink_mod.relink_tracks(
+            tracks,
+            calib,
+            embeddings,
+            shots,
+            fps=float(run.rate),
+            frame_size=size,
+            mode=mode,
+            shirt_lab=shirt_lab,
+        )
+        tracks = relink_mod.apply_ids(tracks, result)
+    except relink_mod.RelinkError as exc:
+        raise PipelineError("refine", [str(exc)]) from exc
+    section = {**result.report, "embeddings": import_mod.embeddings_source(path)}
+    run.notes.append(_relink_note(section))
+    return tracks, section
+
+
+def _calib_frame_size(calib: pd.DataFrame) -> tuple[int, int] | None:
+    """(width, height) of the frames the calibration table refers to, which is the pixel
+    grid of the boxes; None when the table has no row, lacks the columns or names more than
+    one size."""
+    if len(calib) == 0 or "width" not in calib.columns or "height" not in calib.columns:
+        return None
+    sizes = calib[["width", "height"]].drop_duplicates()
+    if len(sizes) != 1 or bool(sizes.isna().to_numpy().any()):
+        return None
+    width, height = (int(value) for value in sizes.iloc[0])
+    return (width, height) if width > 0 and height > 0 else None
+
+
+_RELINK_SKIP_ZH: Mapping[str, str] = MappingProxyType(
+    {
+        "no_embeddings": "插件导出里没有外观特征（embeddings.npz）",
+        "no_identity": "本次运行带有 no_identity 限制，不做身份关联",
+        "track_ids_out_of_range": "有轨迹编号太大，无法给切开后的片段编号",
+        "no_frame_size": "标定表里没有唯一的画面尺寸",
+    }
+)
+"""Why the relink step did not run, in the words of the report note."""
+
+
+def _relink_note(section: Mapping[str, Any]) -> str:
+    """The report note on the relink step: what it cut and joined and that the ids changed,
+    or why it did not run; that its parameters are not validated on other footage; and, when
+    rows have no embedding, how many and what that means for their pieces."""
+    mode = section["mode"]
+    if not section["applied"]:
+        why = _RELINK_SKIP_ZH.get(str(section["reason"]), str(section["reason"]))
+        if section.get("rows_without_embedding"):
+            why = (
+                f"插件导出的 embeddings.npz 里，{section['rows_without_embedding']} 行检测"
+                "没有一行带外观特征"
+            )
+        return (
+            f"轨迹重连（--relink {mode}）没有运行：{why}。轨迹编号没有改变"
+            "（piece_id 列与 track_id 相同）。"
+        )
+    counts = section["counts"]
+    cut_tracks = len({int(piece) for piece, _frame in section["cuts"]})
+    links = counts["core_links"] + counts["leaf_links"]
+    joined = f"{links} 对轨迹片段被判为同一名球员并接上"
+    if counts["leaf_links"]:
+        joined += f"（其中 {counts['leaf_links']} 对接的是只有几个框的短片段）"
+    text = (
+        f"轨迹重连（--relink {mode}）：{cut_tracks} 条轨迹在跟踪器换了人的位置被切开"
+        f"（共 {counts['cuts']} 处）；{joined}。轨迹编号因此改变，原编号保存在 piece_id 列，"
+        "球队、角色和拼接审计的报告仍按原编号。参数是在 13 段 SN-GSR 片段（1280x720、25 帧/秒）"
+        "上拟合或设定的，没有在其他素材上验证。"
+    )
+    fps, fitted = float(section["fps"]), float(section["fitted_fps"])
+    if abs(fps - fitted) > 0.01 * fitted:
+        text += f"本片段为 {fps:g} 帧/秒，与拟合时的 {fitted:g} 帧/秒不同，按帧数计的常数没有换算。"
+    if counts["links_refused_same_frame"]:
+        text += f"{counts['links_refused_same_frame']} 对片段在同一帧里同时出现，没有接上。"
+    if counts.get("rows_without_embedding"):
+        text += (
+            f"{counts['rows_without_embedding']} 行检测没有外观特征；整段都没有外观特征的"
+            "片段不会被接上，实际上也不会被切开。"
+        )
+    isolated = section.get("isolation", {}).get("rows", 0)
+    if isolated:
+        text += (
+            f"另有 {isolated} 次不清晰检测与附近清晰画面的外观冲突，"
+            "且球衣颜色更接近其他轨迹的清晰参照，已各自隔离；"
+            "这些单次编号表示身份未确认，不代表新增球员，不能连起来计算个人跑动。"
+            "此隔离规则尚未在独立素材上验证。"
+        )
+    return text
+
+
+def _reentry_note(counts: Mapping[str, Any]) -> str:
+    """The report note on the track ids split where a player left the picture and came back
+    (gbf.track_tools.split_tracks): how many, and what that changes."""
+    pieces = counts["reentry_pieces"]
+    tracks = len({piece["source_track_id"] for piece in pieces})
+    gap_s = f"{track_tools_mod.REENTRY_MIN_GAP_S:g}"
+    return (
+        f"{tracks} 条插件轨迹在同一镜头内出画后再入画（在画面边缘消失至少 {gap_s} 秒），"
+        f"共拆出 {len(pieces)} 段新轨迹：球员不在画面里时"
+        "跟踪器没有框可跟，回到画面时给的编号只凭外观，可能是另一名球员的。新轨迹的球队按自己的"
+        "球衣颜色核对、号码按自己的读数判断，不沿用出画前的；同一名球员出画前后会是两个轨迹编号。"
+    )
 
 
 def _refine_note(report: Mapping[str, Any], shots: pd.DataFrame) -> str:
@@ -831,9 +1156,10 @@ def _teams_judged(report: Mapping[str, Any]) -> bool:
 def _clear_split_pieces(
     tracks: pd.DataFrame, report: dict[str, Any]
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Once both teams have a shirt colour, a piece of a track split off at a cut (an id of
-    gbf.track_tools.ID_STRIDE or more) whose shirt could not be checked loses its team label
-    too: it was inherited from the player who had the id before the cut.
+    """Once both teams have a shirt colour, a piece of a track split off at a cut or a
+    re-entry into the picture (an id of gbf.track_tools.ID_STRIDE or more,
+    gbf.track_tools.split_tracks) whose shirt could not be checked loses its team label too:
+    it was inherited from the player who had the id before the cut or the gap.
 
     Returns a copy of ``tracks`` without those labels, and ``report`` updated in place: such
     a piece's entry gets ``cleared`` "split_piece" (gbf.team_check marks the contradicted
@@ -891,7 +1217,7 @@ def _team_note(report: Mapping[str, Any]) -> str:
     if kept:
         parts.append(f"{kept} 条轨迹球衣样本太少、未能核对，沿用插件的球队标签")
     if pieces:
-        parts.append(f"{pieces} 条切镜后拆出的轨迹无法核对球衣，也不标球队")
+        parts.append(f"{pieces} 条切镜或出画再入画后拆出的轨迹无法核对球衣，也不标球队")
     return "球队标签按球衣颜色核对：" + "；".join(parts) + "。"
 
 
@@ -913,6 +1239,56 @@ def _role_note(report: Mapping[str, Any]) -> str:
         f"（{report['crowded_share']:.0%}）同时有两人以上被插件标成裁判、站在场内，"
         "而规则只允许一名裁判在场内。插件只给标成球员的人分队，所以分队也不可信："
         "球队标签全部清空，依赖球队的数值（最近对手等）不再计算。角色沿用插件的，未经核对。"
+    )
+
+
+def _audit_stitches(
+    run: _Run,
+    tracks: pd.DataFrame,
+    calib: pd.DataFrame,
+    shots: pd.DataFrame,
+    teams: Mapping[str, Any],
+    roles: Mapping[str, Any],
+    reads: pd.DataFrame,
+) -> dict[str, Any]:
+    """Audit which pieces of one person could be re-joined (gbf.stitch). Audit mode: the
+    decisions go to refine.json and a report note, the track table stays as it is."""
+    report = stitch_mod.audit(
+        tracks,
+        calib,
+        shots,
+        fps=float(run.rate),
+        team_report=teams,
+        role_report=roles,
+        reads=reads,
+    )
+    if report["counts"]["pairs"]:
+        run.notes.append(_stitch_note(report))
+    return report
+
+
+def _stitch_note(report: Mapping[str, Any]) -> str:
+    """The report note on the stitch audit: what it would join and that nothing changed."""
+    counts = report["counts"]
+    decisions = counts["decisions"]
+    parts = [
+        "拼接审计（只记录，不改轨迹编号）：检查了同一镜头内 "
+        f"{counts['pairs']} 对前后相接的轨迹片段，"
+        f"{decisions['stitch']} 对按规则可以证明是同一名球员"
+    ]
+    if decisions["stitch_path_disabled"]:
+        parts.append(
+            f"{decisions['stitch_path_disabled']} 对只有球衣号码一致（号码路径还没启用，只记录）"
+        )
+    if decisions["conflicts_with_plugin"]:
+        parts.append(
+            f"{decisions['conflicts_with_plugin']} 对几何上可以证明，但和插件给的编号冲突，单独记录"
+        )
+    if decisions["ambiguous"]:
+        parts.append(f"{decisions['ambiguous']} 对有不止一个可能的配对，放弃")
+    return (
+        "；".join(parts)
+        + "。规则的前提还没在数据上量过，拼接也还没启用：轨迹编号、球队和所有数值都没有因此改变。"
     )
 
 
@@ -1006,12 +1382,15 @@ def _stage_ball(run: _Run) -> list[str]:
     facts = _ball_file_facts(run.ball_raw)
     candidates = ball_mod.load_candidates(run.ball_raw, allow_incomplete_tail=True)
     tracks, calib, shots = run.tracks(), run.calib(), run.table("shots.parquet")
-    track = ball_mod.track_ball(candidates, tracks, calib, shots, run.rate, run.n_frames)
+    track, candidate_table = ball_mod.track_ball_with_candidates(
+        candidates, tracks, calib, shots, run.rate, run.n_frames
+    )
     strikes = ball_mod.ball_events(track, tracks, run.rate, shots=shots)
     contacts = ball_mod.ball_events(
         track, tracks, run.rate, shots=shots, params=ball_mod.CONTACT_PARAMS
     )
     run.write(track, "ball_track.parquet")
+    run.write(candidate_table, "ball_candidates.parquet")
     run.write(strikes, "ball_events.parquet")
     run.write(contacts, "ball_contacts.parquet")
     frames = sorted(candidates)
@@ -1031,7 +1410,12 @@ def _stage_ball(run: _Run) -> list[str]:
             + ("，最后一行未写完已丢弃" if facts["incomplete_tail_dropped"] else "")
             + "；这些帧按“没有候选”处理。"
         )
-    return ["ball_track.parquet", "ball_events.parquet", "ball_contacts.parquet"]
+    return [
+        "ball_track.parquet",
+        "ball_candidates.parquet",
+        "ball_events.parquet",
+        "ball_contacts.parquet",
+    ]
 
 
 def _stage_audio(run: _Run) -> list[str]:
@@ -1288,12 +1672,30 @@ def _measure_context(run: _Run) -> measure_mod.MeasureContext:
 
 
 def _team_verdicts(run: _Run) -> dict[tuple[int, str], str]:
-    """Team-check verdicts keyed by the refined track and its claimed team."""
+    """Team-check verdicts keyed by the refined track and its claimed team.
+
+    The team check judges the ids from before the relink step. When a relink mode is on
+    (refine.json has a ``relink`` section and the track table a ``piece_id`` column), the
+    verdict of an identity and a team is "consistent" only when every piece of it with rows
+    of that team is; else the first other verdict in piece order (a piece the check did not
+    list counts as "unchecked")."""
     report = read_json(run.path("refine/refine.json"))
-    return {
+    verdicts = {
         (int(row["track_id"]), str(row["team"])): str(row["verdict"])
         for row in report.get("teams", {}).get("tracks", [])
     }
+    if "relink" not in report:
+        return verdicts
+    table = pd.read_parquet(run.path(TRACKS), columns=["track_id", "piece_id", "team"])
+    table = table[table["team"].notna() & (table["track_id"] >= 0)]
+    table = table.drop_duplicates().sort_values(["track_id", "team", "piece_id"], kind="stable")
+    mapped: dict[tuple[int, str], str] = {}
+    for track, team, piece in table[["track_id", "team", "piece_id"]].itertuples(index=False):
+        verdict = verdicts.get((int(piece), str(team)), "unchecked")
+        key = (int(track), str(team))
+        if mapped.get(key, "consistent") == "consistent":
+            mapped[key] = verdict
+    return mapped
 
 
 def _stage_measure(run: _Run) -> list[str]:
@@ -1823,7 +2225,7 @@ def _stage_report(run: _Run) -> list[str]:
 
 
 def _inputs_import(run: _Run) -> list[tuple[str, Path]]:
-    return [
+    found = [
         (f"sngs/{name}", run.sngs / name)
         for name in (
             import_mod.DETECTIONS_NAME,
@@ -1831,6 +2233,10 @@ def _inputs_import(run: _Run) -> list[tuple[str, Path]]:
             import_mod.RECEIPT_NAME,
         )
     ]
+    name = import_mod.EMBEDDINGS_NPZ_NAME
+    if _wants_embeddings(run) and (run.sngs / name).is_file():
+        found.append((f"sngs/{name}", run.sngs / name))
+    return found
 
 
 def _internal(*names: str) -> Callable[[_Run], list[tuple[str, Path]]]:
@@ -1851,6 +2257,7 @@ def _params_import(run: _Run) -> dict[str, Any]:
     return {
         "rep_err_max_px": run.config.rep_err_max_px,
         "in_pitch_margin_m": import_mod.IN_PITCH_MARGIN_M,
+        "embeddings": _wants_embeddings(run),
     }
 
 
@@ -2016,7 +2423,32 @@ def _refine_inputs(run: _Run) -> list[tuple[str, Path]]:
     for name in (enhance_mod.KEYPOINTS_NAME, enhance_mod.KEYPOINTS_RECEIPT_NAME):
         if run.config.refine_calibration and (run.sngs / name).is_file():
             found.append((f"sngs/{name}", run.sngs / name))
+    if run.config.relink != "off" and run.path(EMBEDDINGS).is_file():
+        found.append((EMBEDDINGS, run.path(EMBEDDINGS)))
     return found
+
+
+def _params_relink(run: _Run) -> dict[str, Any]:
+    """The relink part of the refine stage's parameters: the mode and, when it is on, its
+    setting and every number of the method."""
+    mode = run.config.relink
+    if mode == "off":
+        return {"mode": mode}
+    return {
+        "mode": mode,
+        "setting": relink_mod.setting(mode),
+        "params": relink_mod.DEFAULT_PARAMS.as_dict(),
+    }
+
+
+def _relink_limitations(run: _Run) -> tuple[str, ...]:
+    """The refine stage's limitation of the relink step: only when a mode is on."""
+    if run.config.relink == "off":
+        return ()
+    return (
+        "The relink parameters were fitted on 13 SN-GSR clips and are not validated on other "
+        "footage.",
+    )
 
 
 def _params_refine(run: _Run) -> dict[str, Any]:
@@ -2027,9 +2459,12 @@ def _params_refine(run: _Run) -> dict[str, Any]:
         ),
         "jersey": {"min_mean_conf": 0.8, "min_reads": 5, "min_agreement": 0.7},
         "id_stride": track_tools_mod.ID_STRIDE,
+        "reentry_min_gap_s": track_tools_mod.REENTRY_MIN_GAP_S,
+        "stitch_audit": stitch_mod.DEFAULT_PARAMS.as_dict(),
         "team_check": team_check_mod.DEFAULT_PARAMS.as_dict(),
         "role_check": role_check_mod.DEFAULT_PARAMS.as_dict(),
         "side_check": side_check_mod.DEFAULT_PARAMS.as_dict(),
+        "relink": _params_relink(run),
     }
 
 
@@ -2121,16 +2556,25 @@ def _stage_table() -> dict[str, _Stage]:
                 _check_team_labels,
                 role_check_mod,
                 _check_role_labels,
+                stitch_mod,
+                _audit_stitches,
+                _stitch_note,
                 side_check_mod,
                 _check_sides,
                 _sides_note,
+                relink_mod,
+                _relink,
+                _calib_frame_size,
+                _relink_note,
             ),
             _refine_inputs,
             _params_refine,
             "Track ids split at cuts, unconfident jersey numbers dropped, and (with the "
             "plugin's pitch keypoints) the calibration refitted with a fixed camera centre "
-            "per camera and smooth rotation and zoom.",
+            "per camera and smooth rotation and zoom. With --relink on, tracks cut where the "
+            "tracker changed person and the pieces of one person joined (gbf.relink).",
             ("The refit is checked on held-out keypoints only: self-consistency.", *common),
+            _relink_limitations,
         ),
         _Stage(
             "kinematics",
@@ -2284,14 +2728,17 @@ def _stage_table() -> dict[str, _Stage]:
 def _stage_key(run: _Run, stage: _Stage, inputs: list[dict[str, Any]], params: Any) -> str:
     # The run's tags are part of the key: a re-run with other tags (another pose model,
     # --restrictions) writes every artifact again with them, never keeps old ones. So is the
-    # whole package source: a stage's outputs never outlive an edit of the code it runs.
+    # transitive stage source: unrelated algorithm edits can reuse verified outputs.
+    sources = _stage_sources(_SOURCE_DIR, stage, cache=run.source_cache)
+    run.stage_sources[stage.name] = sources
     return canonical_sha256(
         {
             "stage": stage.name,
             "inputs": [[ref["name"], ref["sha256"]] for ref in inputs],
             "parameters": params,
             "code": _fingerprint(stage.function, stage.modules),
-            "source": run.source,
+            "cache_version": 2,
+            "source": canonical_sha256(sources),
             "restrictions": sorted(set(run.restrictions)),
         }
     )
@@ -2340,13 +2787,18 @@ def _write_receipt(
             run.file_ref(name, run.path(name), internal=True) for name in dict.fromkeys(outputs)
         ],
         "scope": stage.scope,
-        "limitations": list(stage.limitations),
+        "limitations": [
+            *stage.limitations,
+            *(stage.run_limitations(run) if stage.run_limitations is not None else ()),
+        ],
         "restrictions": list(run.restrictions),
         "environment": {"python": platform.python_version(), "gbf": gbf.__version__},
         "result": {
             "stage": stage.name,
             "key": key,
             "source_sha256": run.source,
+            "cache_version": 2,
+            "stage_sources": run.stage_sources[stage.name],
             "parameters": params,
             "wall_s": round(wall_s, 3),
             "facts": _jsonable(run.result_extras.get(stage.name, {})),
@@ -2367,10 +2819,24 @@ def _restore(run: _Run, stage: _Stage, receipt: Mapping[str, Any]) -> None:
 
 
 def _run_stage(run: _Run, stage: _Stage) -> StageResult:
+    started = time.perf_counter()
+    run.profile[stage.name] = {"status": "failed", "lookup_started": started}
+    try:
+        result = _run_stage_impl(run, stage)
+        run.profile[stage.name]["status"] = result.status
+        return result
+    finally:
+        run.profile[stage.name].pop("lookup_started", None)
+        run.profile[stage.name]["elapsed_s"] = round(time.perf_counter() - started, 6)
+
+
+def _run_stage_impl(run: _Run, stage: _Stage) -> StageResult:
     selected = stage.name in run.config.stages
     receipt_path = run.path(f"receipts/{stage.name}.json")
     relative_receipt = f"receipts/{stage.name}.json"
     old = _read_receipt(receipt_path)
+    profile = run.profile[stage.name]
+    profile["reason"] = "checking" if selected else "not_selected"
     if not selected:
         if old is None or not _outputs_intact(run, old):
             raise PipelineError(
@@ -2393,12 +2859,23 @@ def _run_stage(run: _Run, stage: _Stage) -> StageResult:
     ]
     params = _jsonable(stage.parameters(run))
     key = _stage_key(run, stage, inputs, params)
-    if (
-        not run.config.force
-        and old is not None
-        and old.get("result", {}).get("key") == key
-        and _outputs_intact(run, old)
-    ):
+    same_key = old is not None and old.get("result", {}).get("key") == key
+    intact = same_key and _outputs_intact(run, old)
+    if run.config.force:
+        reason = "forced"
+    elif old is None:
+        reason = "no_receipt"
+    elif not same_key:
+        reason = "key_changed"
+    elif not intact:
+        reason = "outputs_changed"
+    else:
+        reason = "cache_hit"
+    profile["reason"] = reason
+    profile["lookup_s"] = round(time.perf_counter() - profile.pop("lookup_started"), 6)
+    if old is not None:
+        profile["previous_compute_s"] = old.get("result", {}).get("wall_s")
+    if not run.config.force and intact:
         outputs = tuple(str(entry["relpath"]) for entry in old.get("outputs", []))
         _restore(run, stage, old)
         run.log(f"[{stage.name}] skipped (inputs, parameters and code unchanged)")
@@ -2433,6 +2910,10 @@ def _check_config(config: PipelineConfig) -> list[str]:
         problems.append(f"--stages: unknown stage(s) {', '.join(unknown)}; choose from {STAGES}")
     if config.pose_model not in POSE_MODELS:
         problems.append(f"--pose-model must be one of {sorted(POSE_MODELS)}")
+    if config.relink not in relink_mod.MODES:
+        problems.append(
+            f"--relink must be one of {', '.join(relink_mod.MODES)}, got {config.relink!r}"
+        )
     if (
         isinstance(config.max_highlights, bool)
         or not isinstance(config.max_highlights, int)
@@ -2562,7 +3043,10 @@ def _run_restrictions(run: _Run) -> tuple[tuple[str, ...], dict[str, list[str]]]
     """The run's tags: the union of every input's tags and ``config.restrictions`` (ADR
     0002 rule 1), and where each input's tags came from. An input without declared tags
     (a ball file without a receipt, labels without a "restrictions" list) adds no_share;
-    pose from the pinned weights adds POSE_MODEL_RESTRICTIONS."""
+    pose from the pinned weights adds POSE_MODEL_RESTRICTIONS, and a relink step that reads
+    the export's embeddings adds RELINK_RESTRICTIONS (a mode is on, no input forbids linking
+    identities and the receipt lists embeddings.npz: the import then reads them, also when
+    the step is skipped later for another reason)."""
     sources: dict[str, list[str]] = {"plugin": _plugin_restrictions(run.sngs)}
     for what, receipt in _input_receipts(run.config)[1:]:
         sources[what] = _declared_tags(read_json(receipt), receipt.name)
@@ -2579,6 +3063,12 @@ def _run_restrictions(run: _Run) -> tuple[tuple[str, ...], dict[str, list[str]]]
     if run.config.pose_estimator is None and POSE_MODELS.get(run.config.pose_model):
         sources["pose_model"] = list(POSE_MODEL_RESTRICTIONS)
     sources["config"] = list(run.config.restrictions)
+    if (
+        run.config.relink != "off"
+        and not any("no_identity" in found for found in sources.values())
+        and import_mod.lists_embeddings(run.sngs)
+    ):
+        sources["relink"] = list(RELINK_RESTRICTIONS)
     tags = sorted({tag for found in sources.values() for tag in found})
     return tuple(tags), sources
 
@@ -2625,6 +3115,16 @@ def _write_run_json(run: _Run, status: str, error: list[str] | None, wall_s: flo
                 ("ball_raw.jsonl", run.ball_raw),
                 ("ball-receipt.json", run.ball_raw.parent / BALL_RECEIPT_NAME),
                 *((f"sngs/{n}", run.sngs / n) for n in _SNGS_FILES),
+                *(
+                    (
+                        (
+                            "sngs/" + import_mod.EMBEDDINGS_NPZ_NAME,
+                            run.sngs / import_mod.EMBEDDINGS_NPZ_NAME,
+                        ),
+                    )
+                    if _wants_embeddings(run)
+                    else ()
+                ),
                 ("sngs/" + enhance_mod.KEYPOINTS_NAME, run.sngs / enhance_mod.KEYPOINTS_NAME),
                 (
                     "sngs/" + enhance_mod.KEYPOINTS_RECEIPT_NAME,
@@ -2673,6 +3173,7 @@ def _write_run_json(run: _Run, status: str, error: list[str] | None, wall_s: flo
                     "full_clip": run.config.full_clip,
                     "audio_offset_s": run.config.audio_offset_s,
                     "rep_err_max_px": run.config.rep_err_max_px,
+                    "relink": run.config.relink,
                 },
                 "stages": [
                     {
@@ -2684,6 +3185,7 @@ def _write_run_json(run: _Run, status: str, error: list[str] | None, wall_s: flo
                     for result in run.results
                 ],
                 "wall_s": round(wall_s, 3),
+                "profile": run.profile,
                 "notes_zh": list(dict.fromkeys(run.notes)),
                 "error": error,
                 "facts": run.result_extras,
@@ -2812,6 +3314,15 @@ def _parser() -> argparse.ArgumentParser:
         help="keep the plugin's per-frame calibration (skip the fixed-centre refit)",
     )
     parser.add_argument(
+        "--relink",
+        choices=relink_mod.MODES,
+        default="off",
+        help="cut tracks where the tracker changed person and join the pieces of one person "
+        "(gbf.relink; needs the plugin export's embeddings.npz, and a run that reads it "
+        "carries the tag hl3); parameters fitted on 13 SN-GSR clips, not validated on other "
+        "footage",
+    )
+    parser.add_argument(
         "--labels", type=Path, default=None, help="labels to compare the highlights with"
     )
     return parser
@@ -2850,6 +3361,7 @@ def main(argv: list[str]) -> int:
         full_clip=not args.no_full_clip,
         audio_offset_s=args.audio_offset_s,
         refine_calibration=not args.no_calib_refine,
+        relink=args.relink,
         labels=args.labels,
     )
     problems = _check_config(config)

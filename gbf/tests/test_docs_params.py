@@ -50,6 +50,15 @@ M1_MODULES = (
     "gbf.team_check",
     "gbf.role_check",
     "gbf.side_check",
+    "gbf.stitch",
+    "gbf.relink",
+    "gbf.relink.api",
+    "gbf.relink.inputs",
+    "gbf.relink.cuts",
+    "gbf.relink.appear",
+    "gbf.relink.space",
+    "gbf.relink.link",
+    "gbf.relink.leaves",
     "gbf.kinematics",
     "gbf.ball",
     "gbf.audio",
@@ -65,14 +74,36 @@ M1_MODULES = (
 )
 """The modules of the M1 pipeline (gbf.pipeline's stages and the modules they call)."""
 
-NO_TABLE_MODULES = ("gbf.enhance", "gbf.pose", "gbf.report", "gbf.label_eval", "gbf.pipeline")
-"""M1 modules without a table of their own: no tuned parameter of their own, or (gbf.pipeline)
-their settings are listed in the table of the module they are passed to."""
+NO_TABLE_MODULES = (
+    "gbf.enhance",
+    "gbf.relink",
+    "gbf.relink.api",
+    "gbf.pose",
+    "gbf.report",
+    "gbf.label_eval",
+    "gbf.pipeline",
+)
+"""M1 modules without a table of their own: no tuned parameter of their own, or (gbf.pipeline,
+gbf.relink, gbf.relink.api) their settings are listed in the table of the module they are
+passed to."""
 
 NOT_TUNED: Mapping[str, Mapping[str, str]] = {
     "gbf.sngs_import": {"MAX_LISTED_PROBLEMS": "length of an error report"},
     "gbf.shots_grammar": {"REFERENCE_HEIGHT_PX": "the 1080-line reference height"},
     "gbf.track_tools": {"ID_STRIDE": "id scheme of tracks split at cuts"},
+    "gbf.stitch": {
+        "StitchParams.boundary_points": "sampling of the disc rims (numerical guard)",
+        "StitchParams.max_listed_abstentions": "length of a report list",
+    },
+    "gbf.relink.api": {
+        "FITTED_FPS": "frame rate of the clips the relink parameters were fitted on; reported "
+        "next to a run's own rate, used in no arithmetic",
+    },
+    "gbf.relink.inputs": {
+        "REFERENCE_HEIGHT_PX": "the 720-line reference height of the relink pixel constants",
+        "_HAS_BLOCK_ROWS": "rows per memory block when looking for rows with an embedding",
+    },
+    "gbf.relink.cuts": {"SUB_STRIDE": "id scheme of the sub-pieces after a relink cut"},
     "gbf.calib_refine": {
         "_LOGF_MIN": "focal-length bound of the fit (numerical guard)",
         "_LOGF_MAX": "focal-length bound of the fit (numerical guard)",

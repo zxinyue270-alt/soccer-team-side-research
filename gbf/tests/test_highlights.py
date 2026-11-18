@@ -413,6 +413,116 @@ def test_duel_uses_metres_on_pitch_frames_and_box_heights_elsewhere() -> None:
     assert duel[3] == 0.0  # no ball, no duel
 
 
+def test_parallel_runners_outside_shared_ball_reach_are_not_a_duel() -> None:
+    """Nearby opponents running after the ball are not necessarily contesting it."""
+    shots = make_shots(("wide", 100, 1.0))
+    rows, balls = [], []
+    for frame in range(100):
+        x = frame * 0.15
+        rows.extend(
+            [
+                {"frame": frame, "track_id": 1, "pitch_x": x, "pitch_y": 0.0},
+                {
+                    "frame": frame,
+                    "track_id": 2,
+                    "team": "right",
+                    "pitch_x": x - 1.8,
+                    "pitch_y": 0.0,
+                },
+            ]
+        )
+        balls.append({"frame": frame, "pitch_x": x + 0.4, "pitch_y": 0.0})
+    tracks = make_tracks(rows)
+    signals = compute_signals(tracks, None, make_ball(balls), None, shots, None, FPS)
+    assert not signals["duel"].any()
+    assert signals["ev_duel_id_a"].eq(-1).all()
+    assert signals["ev_duel_id_b"].eq(-1).all()
+    assert detect_highlights(signals, shots, tracks, None, FPS)["highlights"] == []
+
+
+@pytest.mark.parametrize("rate", [25, 50])
+@pytest.mark.parametrize("boundary", [None, "cut", "pair", "unit"])
+def test_shared_ball_reach_keeps_local_context_but_not_other_shots_pairs_or_units(
+    rate: int, boundary: str | None
+) -> None:
+    n, at = 4 * rate, 2 * rate
+    shots = (
+        make_shots(("wide", at + 1, 1.0), ("wide", n - at - 1, 1.0))
+        if boundary == "cut"
+        else make_shots(("wide", n, 1.0))
+    )
+    rows, balls = [], []
+    for frame in range(n):
+        after = frame > at
+        rows.extend(
+            [
+                {"frame": frame, "track_id": 1, "pitch_x": 0.0, "pitch_y": 0.0},
+                {
+                    "frame": frame,
+                    "track_id": 3 if boundary == "pair" and after else 2,
+                    "team": "right",
+                    "pitch_x": 1.0,
+                    "pitch_y": 0.0,
+                    "foot_u": 120.0,
+                },
+            ]
+        )
+        if boundary == "unit" and after:
+            rows[-2]["pitch_usable"] = rows[-1]["pitch_usable"] = False
+        balls.append(
+            {
+                "frame": frame,
+                "pitch_x": 0.5 if frame == at else -2.0,
+                "pitch_y": 0.0,
+                "u": 70.0 if frame == at else -80.0,
+                "v": 100.0,
+            }
+        )
+    signals = compute_signals(make_tracks(rows), None, make_ball(balls), None, shots, None, rate)
+    assert signals.loc[at, "duel"] == 1.0
+    assert signals.loc[at - int(0.4 * rate), "duel"] == 1.0
+    assert signals.loc[at - int(0.8 * rate), "duel"] == 0.0
+    assert signals.loc[at + 1, "duel"] == (1.0 if boundary is None else 0.0)
+    assert signals.loc[at + int(0.8 * rate), "duel"] == 0.0
+
+
+def test_image_duel_also_needs_both_players_within_ball_reach() -> None:
+    shots = make_shots(("medium", 80, 0.0))
+    rows, balls = [], []
+    for frame in range(80):
+        rows.extend(
+            [
+                {"frame": frame, "track_id": 1, "foot_u": 100.0},
+                {"frame": frame, "track_id": 2, "team": "right", "foot_u": 180.0},
+            ]
+        )
+        # Both inside the broad 2-height search radius; the second cannot reach it.
+        balls.append({"frame": frame, "u": 60.0, "v": 100.0})
+    tracks = make_tracks(rows)
+    signals = compute_signals(tracks, None, make_ball(balls), None, shots, None, FPS)
+    assert not signals["duel"].any()
+    close = make_ball([{**b, "u": 140.0} for b in balls])
+    signals = compute_signals(tracks, None, close, None, shots, None, FPS)
+    assert signals["duel"].gt(0).all()
+
+
+def test_an_unconfirmed_closer_pair_does_not_hide_a_pair_reaching_the_ball() -> None:
+    shots = make_shots(("wide", 1, 1.0))
+    tracks = make_tracks(
+        [
+            {"frame": 0, "track_id": 1, "pitch_x": 0.0, "pitch_y": 0.0},
+            {"frame": 0, "track_id": 2, "team": "right", "pitch_x": -0.2, "pitch_y": 0.0},
+            {"frame": 0, "track_id": 3, "team": "right", "pitch_x": 2.5, "pitch_y": 0.0},
+        ]
+    )
+    ball = make_ball([{"frame": 0, "pitch_x": 1.4, "pitch_y": 0.0}])
+    signals = compute_signals(tracks, None, ball, None, shots, None, FPS)
+    assert signals.loc[0, "ev_duel_id_a"] == 1
+    assert signals.loc[0, "ev_duel_id_b"] == 3
+    assert signals.loc[0, "ev_duel_dist"] == 2.5
+    assert signals.loc[0, "duel"] == 0.5
+
+
 def test_no_image_plane_duel_in_upper_body_close_ups() -> None:
     shots = make_shots(("close", 2, 0.0), ("close", 2, 0.0))
     shots["median_box_h"] = [800.0, 300.0]  # 1080-line pixels: upper bodies, then full ones

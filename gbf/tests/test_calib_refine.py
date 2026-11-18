@@ -175,6 +175,32 @@ def test_cut_is_not_smoothed_across() -> None:
         assert _angle_deg(refined_R, true_cams[frame].R) < 0.2, frame
 
 
+@pytest.mark.parametrize("frame", [0, 15, 29])
+def test_one_opposite_side_plugin_pose_does_not_poison_the_shared_camera_fit(frame: int) -> None:
+    """A per-frame pose can face the pitch from the other side. Replacing its centre
+    with the group's centre then puts its observations behind the camera. This is an
+    infeasible starting pose, not evidence that all frames need a different camera.
+    The refit must still recover the known synthetic camera from the observed points.
+    """
+    calib, kps, shots, true_cams = _scene(seed=12, shots=((30, -6.0, 6.0, TRUE_C),), jitter_m=1.0)
+    wrong = _camera(np.array([-17.0, -135.0, -30.0]), np.zeros(3), 3200.0)
+    uv, _, _ = project(wrong, kps[frame][:, 2:5])
+    calib.at[frame, "K"] = wrong.K.ravel()
+    calib.at[frame, "R"] = wrong.R.ravel()
+    calib.at[frame, "C"] = wrong.C
+    calib.at[frame, "rep_err"] = float(np.median(np.linalg.norm(uv - kps[frame][:, :2], axis=1)))
+    calib.at[frame, "pitch_usable"] = False
+
+    result = cr.refine_calibration(calib, kps, shots)
+    assert result.calib["refined"].all()
+    assert result.calib["pitch_usable"].all()
+    centre = np.asarray(result.calib["C"].iloc[0])
+    assert np.linalg.norm(centre - TRUE_C) < 1.0
+    fitted_R = np.asarray(result.calib.loc[frame, "R"]).reshape(3, 3)
+    assert _angle_deg(fitted_R, true_cams[frame].R) < 0.2
+    assert result.report["groups"][0]["converged"] is True
+
+
 def test_smoothing_prior_reduces_rotation_noise() -> None:
     calib, kps, shots, true_cams = _scene(
         seed=9, shots=((60, -8.0, 8.0, TRUE_C),), jitter_m=0.0, n_points=5, noise_px=3.0

@@ -5,6 +5,16 @@
   of different teams in consecutive shots shared one id).
   Every (track id, shot) piece after the first one of an id gets a new id, so an id never
   spans a cut.
+- :func:`split_tracks`: the same, and with the frame size also at a re-entry: within a
+  shot, a track missing for at least :data:`REENTRY_MIN_GAP_S` whose box touches a frame
+  edge just before or just after the gap left the picture (a player running out of it, or
+  the camera panning away) and came back. While the player is out of the picture the
+  tracker has no box to follow, so the id it gives on the way back comes from appearance
+  alone, and players of one team look alike: the plugin may hand the returning player the
+  id of another player (and with it that player's team and jersey), or the returning
+  player's id to someone else. The piece after such a gap gets a new id, so its team and
+  jersey are judged on its own rows (gbf.team_check, :func:`confident_jerseys`), never
+  inherited across the gap.
 - :func:`confident_jerseys`: the plugin writes a jersey guess on almost every row, mostly
   with confidence near 0. Only a number read with a mean confidence of at least
   ``min_mean_conf`` over at least ``min_reads`` rows of the same track, and agreed by at
@@ -27,6 +37,13 @@ import pandas as pd
 
 #: new ids for later pieces are old id + k * ID_STRIDE (k = 1, 2, ...)
 ID_STRIDE = 100_000
+
+REENTRY_MIN_GAP_S = 0.4
+"""A track missing for at least this long within a shot, next to a frame edge, left the
+picture and came back (:func:`split_tracks`): longer than the frame or two a detector drops
+a person half cut off by the edge (10 frames at 25 fps, against the 3 frames gbf.kinematics
+bridges), so the player was out of sight and the tracker's id on the way back rests on
+appearance alone."""
 
 SAME_SPOT_IOU = 0.75
 """Two person boxes that overlap more than this (intersection over union) are one detection
@@ -69,6 +86,10 @@ def _need(frame: pd.DataFrame, name: str, columns: Sequence[str], where: str) ->
         raise TrackToolsError(where, [f"{name} misses column(s) {missing}"])
 
 
+SPLIT_REASONS: tuple[str, ...] = ("first", "cut", "reentry")
+"""Why a piece of :func:`split_tracks` begins: the id's first piece, a cut, a re-entry."""
+
+
 def split_tracks_at_cuts(
     tracks: pd.DataFrame, shots: pd.DataFrame
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -78,32 +99,116 @@ def split_tracks_at_cuts(
     ``source_track_id``) and the mapping ``source_track_id, shot_id, track_id``. Negative
     ids (no track) are left alone.
     """
-    _need(tracks, "tracks", ("frame", "track_id"), "split_tracks_at_cuts")
-    _need(shots, "shots", ("shot_id", "start_frame", "end_frame"), "split_tracks_at_cuts")
+    out, mapping = split_tracks(tracks, shots, where="split_tracks_at_cuts")
+    return out, mapping[["source_track_id", "shot_id", "track_id"]]
+
+
+def boxes_touch_edge(boxes: np.ndarray, size: tuple[float, float]) -> np.ndarray:
+    """:func:`box_touches_edge` of every box ``(n, 4)`` (x1, y1, x2, y2); False when a box
+    is not finite."""
+    boxes = np.asarray(boxes, dtype=np.float64).reshape(-1, 4)
+    width, height = float(size[0]), float(size[1])
+    finite = np.isfinite(boxes).all(axis=1)
+    safe = np.where(finite[:, None], boxes, 0.0)
+    edge = np.maximum(EDGE_TOUCH_PER_BOX_HEIGHT * (safe[:, 3] - safe[:, 1]), 2.0 * height / 1080)
+    inner = np.minimum.reduce(
+        [safe[:, 0], safe[:, 1], width - 0.5 - safe[:, 2], height - 0.5 - safe[:, 3]]
+    )
+    return finite & (inner <= edge)
+
+
+def split_tracks(
+    tracks: pd.DataFrame,
+    shots: pd.DataFrame,
+    *,
+    frame_size: tuple[float, float] | None = None,
+    fps: float | None = None,
+    where: str = "split_tracks",
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Give every piece of a track id after its first one a new id: a piece ends at a cut
+    and, with ``frame_size`` (width, height of the boxes' pixel grid) and ``fps``, at a
+    re-entry (module docstring; ``tracks`` then needs x1, y1, x2, y2).
+
+    A re-entry is a gap of at least ``REENTRY_MIN_GAP_S * fps`` (rounded, at least 1)
+    frames without a row of the id between two of its rows in one shot, where a box of the
+    id on the frame before the gap or on the frame after it touches a frame edge
+    (:func:`boxes_touch_edge`). A gap away from every edge (a player hidden behind another,
+    missed by the detector) keeps the id.
+
+    Returns the new table (same rows and order, ``track_id`` rewritten, the original in
+    ``source_track_id``) and the mapping, one row per piece in id and frame order:
+    ``source_track_id, shot_id, start_frame, end_frame, track_id, reason``
+    (:data:`SPLIT_REASONS`; ``gap_frames``, the frames missing before a re-entry piece, 0
+    otherwise). Piece k of an id (from 0, in frame order) gets ``id + k * ID_STRIDE``.
+    Negative ids (no track) are left alone.
+    """
+    _need(tracks, "tracks", ("frame", "track_id"), where)
+    _need(shots, "shots", ("shot_id", "start_frame", "end_frame"), where)
+    reentry = frame_size is not None
+    if reentry:
+        _need(tracks, "tracks", ("x1", "y1", "x2", "y2"), where)
+        if fps is None or not math.isfinite(float(fps)) or float(fps) <= 0:
+            raise TrackToolsError(where, [f"fps must be a positive number, got {fps!r}"])
     starts = shots.sort_values("start_frame")
     frames = tracks["frame"].to_numpy(dtype=np.int64)
     index = np.searchsorted(starts["start_frame"].to_numpy(), frames, side="right") - 1
     if (index < 0).any() or (frames > starts["end_frame"].to_numpy()[index]).any():
-        raise TrackToolsError("split_tracks_at_cuts", ["some track rows lie outside every shot"])
+        raise TrackToolsError(where, ["some track rows lie outside every shot"])
     shot_of = starts["shot_id"].to_numpy()[index]
     ids = tracks["track_id"].to_numpy(dtype=np.int64)
     if ids.max(initial=0) >= ID_STRIDE:
-        raise TrackToolsError("split_tracks_at_cuts", [f"track ids must be < {ID_STRIDE}"])
-    pieces = (
-        pd.DataFrame({"source_track_id": ids, "shot_id": shot_of, "frame": frames})
-        .loc[lambda d: d["source_track_id"] >= 0]
-        .groupby(["source_track_id", "shot_id"], as_index=False)["frame"]
-        .min()
-        .sort_values(["source_track_id", "frame"], kind="stable")
+        raise TrackToolsError(where, [f"track ids must be < {ID_STRIDE}"])
+
+    rows = pd.DataFrame(
+        {"pos": np.arange(len(ids)), "source_track_id": ids, "shot_id": shot_of, "frame": frames}
     )
-    pieces["k"] = pieces.groupby("source_track_id").cumcount()
-    pieces["track_id"] = pieces["source_track_id"] + pieces["k"] * ID_STRIDE
-    mapping = pieces[["source_track_id", "shot_id", "track_id"]].reset_index(drop=True)
-    lookup = {(int(a), int(s)): int(t) for a, s, t in mapping.itertuples(index=False, name=None)}
-    new_ids = np.array(
-        [lookup.get((int(t), int(s)), int(t)) for t, s in zip(ids, shot_of, strict=True)],
-        dtype=np.int64,
+    if reentry:
+        boxes = tracks[["x1", "y1", "x2", "y2"]].to_numpy(dtype=np.float64)
+        rows["edge"] = boxes_touch_edge(boxes, frame_size)
+    else:
+        rows["edge"] = False
+    rows = rows[rows["source_track_id"] >= 0]
+    # One entry per (id, frame): its shot, and whether any of its boxes there touches an edge.
+    per_frame = (
+        rows.groupby(["source_track_id", "frame"], as_index=False, sort=True)
+        .agg(shot_id=("shot_id", "first"), edge=("edge", "any"))
+        .reset_index(drop=True)
     )
+    same_id = per_frame["source_track_id"].eq(per_frame["source_track_id"].shift())
+    new_shot = per_frame["shot_id"].ne(per_frame["shot_id"].shift())
+    gap = (per_frame["frame"] - per_frame["frame"].shift() - 1).fillna(0).astype(np.int64)
+    reason = np.where(~same_id, "first", np.where(new_shot, "cut", ""))
+    if reentry:
+        min_gap = max(1, round(REENTRY_MIN_GAP_S * float(fps)))
+        at_edge = per_frame["edge"] | per_frame["edge"].shift(fill_value=False)
+        back = same_id & ~new_shot & (gap >= min_gap) & at_edge
+        reason = np.where(back, "reentry", reason)
+    per_frame["reason"] = reason
+    per_frame["gap_frames"] = np.where(reason == "reentry", gap, 0)
+    per_frame["piece"] = (per_frame["reason"] != "").cumsum()
+
+    pieces = per_frame.groupby("piece", sort=True).agg(
+        source_track_id=("source_track_id", "first"),
+        shot_id=("shot_id", "first"),
+        start_frame=("frame", "min"),
+        end_frame=("frame", "max"),
+        reason=("reason", "first"),
+        gap_frames=("gap_frames", "first"),
+    )
+    k = pieces.groupby("source_track_id").cumcount().to_numpy(dtype=np.int64)
+    pieces["track_id"] = pieces["source_track_id"].to_numpy(dtype=np.int64) + k * ID_STRIDE
+    piece_of = per_frame.set_index(["source_track_id", "frame"])["piece"]
+    keys = pd.MultiIndex.from_arrays([rows["source_track_id"], rows["frame"]])
+    new_ids = ids.copy()
+    new_ids[rows["pos"].to_numpy()] = (
+        pieces["track_id"].reindex(piece_of.reindex(keys).to_numpy()).to_numpy(dtype=np.int64)
+    )
+    mapping = pieces[
+        ["source_track_id", "shot_id", "start_frame", "end_frame", "track_id", "reason"]
+    ].reset_index(drop=True)
+    mapping["gap_frames"] = pieces["gap_frames"].to_numpy(dtype=np.int64)
+    for name in ("source_track_id", "shot_id", "start_frame", "end_frame", "track_id"):
+        mapping[name] = mapping[name].astype(np.int64)
     out = tracks.copy()
     out["source_track_id"] = ids
     out["track_id"] = new_ids
@@ -190,10 +295,7 @@ def box_touches_edge(box: Sequence[float], size: tuple[int, int] | None) -> bool
     """Whether any frame edge cuts a box (with a small height-scaled tolerance)."""
     if size is None:
         return False
-    width, height = size
-    x1, y1, x2, y2 = box
-    edge = max(EDGE_TOUCH_PER_BOX_HEIGHT * (y2 - y1), 2.0 * height / 1080.0)
-    return min(x1, y1, width - 0.5 - x2, height - 0.5 - y2) <= edge
+    return bool(boxes_touch_edge(np.asarray([box], dtype=np.float64), size)[0])
 
 
 def speed_chord_safe(frame: int, track: int, unsafe: Set[tuple[int, int]], half: int) -> bool:

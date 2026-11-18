@@ -125,6 +125,11 @@ PRIVACY_ZH = (
     "字体或脚本，也不调用大模型或其他在线服务；视频、图片和数据都留在这台电脑上。地址里的访问令牌"
     "只对这次启动有效，请不要分享。"
 )
+PRIVACY_MODEL_ZH = (
+    "本页只监听 127.0.0.1，不加载外部字体或脚本。已配置 DeepSeek：选中片段的抽样全景、"
+    "局部图和位置证据会发送给 DeepSeek 生成待核对的 AI 解说；检测、配音和剪辑在本机运行。"
+    "地址里的访问令牌只对这次启动有效，请不要分享。"
+)
 TOKEN_MESSAGE = (
     "缺少或错误的访问令牌：请用终端里打印的完整地址（带 #t=…）打开本页。"
     "服务每次启动都会换一个新令牌。"
@@ -462,7 +467,11 @@ class WebHandler(BaseHTTPRequestHandler):
         payload = {
             "version": gbf.__version__,
             "runs_dir": str(self.server.runs_dir),
-            "privacy_zh": PRIVACY_ZH,
+            "privacy_zh": (
+                PRIVACY_MODEL_ZH
+                if self.server.jobs.environ.get("GBF_DEEPSEEK_API_KEY")
+                else PRIVACY_ZH
+            ),
             "stages": [
                 {"name": name, "name_zh": STAGE_NAMES_ZH.get(name, name)} for name in STAGES
             ],
@@ -762,7 +771,7 @@ def main(argv: list[str]) -> int:
         )
         return 1
     print(
-        "gbf web：本机分析台已启动（只监听 127.0.0.1，不连外网）。\n"
+        "gbf web：本机分析台已启动（只监听 127.0.0.1）。\n"
         f"  运行目录：{server.runs_dir}\n"
         f"  在浏览器里打开：{server.url}\n"
         "  这个地址带着本次启动的访问令牌，只给自己用，不要分享。按 Ctrl+C 停止服务"

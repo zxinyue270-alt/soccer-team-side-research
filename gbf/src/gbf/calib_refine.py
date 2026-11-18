@@ -13,6 +13,13 @@ keypoints plus a penalty on the second difference of rotation and log focal leng
 consecutive frames of the same shot; nothing is smoothed across a cut. Principal point and
 square pixels are taken from the plugin's intrinsics; lens distortion is not modelled.
 
+Before fitting, rotations are checked at the shared starting centre. A per-frame pose
+that would put its observed world points behind this centre starts from the nearest
+feasible pose in the same shot instead. This changes only the initial rotation and focal
+length; it does not add observations or bridge missing frames. Replacements are listed
+under ``initial_pose_replacements``. With no feasible same-shot start, the group keeps
+the plugin calibration.
+
 The report entry of a fitted group gives the solver's status and evaluations and whether it
 converged: a solver stopped at ``max_nfev`` has not, and where it stopped depends on
 floating-point detail, so it is not the fit this method defines. A group whose refit (the one
@@ -353,6 +360,7 @@ class _Group:
     C0: np.ndarray
     cx: float
     cy: float
+    initial_pose_replacements: list[dict[str, int]]
 
 
 def _build_group(
@@ -441,18 +449,43 @@ def _build_group(
             same = np.flatnonzero(have)
         j = same[np.argmin(np.abs(same - i))]
         R0[i], f0[i] = R0[j], f0[j]
+    C0 = np.median(np.stack(centres), axis=0)
+    # A valid per-frame camera can face the pitch from the opposite side. Combining
+    # that rotation with C0 puts points behind the camera, where _project clips the
+    # depth and produces enormous residuals. One such initial pose can spoil the
+    # whole fit. Use a feasible same-shot pose as an initial guess only: observations,
+    # frames to fit and all acceptance checks stay unchanged.
+    initial_R, initial_f = R0.copy(), f0.copy()
+    replacements = []
+    obs_frame_array = np.concatenate(obs_frame)
+    obs_X_array = np.concatenate(obs_X)
+    for i, frame in enumerate(frames):
+        X = obs_X_array[obs_frame_array == i]
+        if not len(X) or np.all(((X - C0) @ initial_R[i].T)[:, 2] > 1e-6):
+            continue
+        same = np.flatnonzero(shot_of == shot_of[i])
+        nearest = same[np.argsort(np.abs(frames[same] - frame), kind="stable")]
+        source = next(
+            (int(j) for j in nearest if np.all(((X - C0) @ initial_R[j].T)[:, 2] > 1e-6)),
+            None,
+        )
+        if source is None:
+            return f"no same-shot starting pose puts frame {int(frame)} points in front of C0"
+        R0[i], f0[i] = initial_R[source], initial_f[source]
+        replacements.append({"frame": int(frame), "initial_pose_from": int(frames[source])})
     return _Group(
         frames=frames,
         shot_of=shot_of,
-        obs_frame=np.concatenate(obs_frame),
+        obs_frame=obs_frame_array,
         obs_uv=np.concatenate(obs_uv),
-        obs_X=np.concatenate(obs_X),
+        obs_X=obs_X_array,
         holdout=np.concatenate(holdout),
         R0=R0,
         f0=f0,
-        C0=np.median(np.stack(centres), axis=0),
+        C0=C0,
         cx=principal[0],
         cy=principal[1],
+        initial_pose_replacements=replacements,
     )
 
 
@@ -637,6 +670,7 @@ def refine_calibration(
             "shots": [int(s) for s in shot_ids],
             "frames": int(len(group.frames)),
             "centre_start": [round(float(v), 3) for v in group.C0],
+            "initial_pose_replacements": group.initial_pose_replacements,
         }
         held: tuple[np.ndarray, np.ndarray] | None = None
         if settings.holdout_fraction > 0 and group.holdout.any():

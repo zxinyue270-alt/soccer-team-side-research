@@ -67,6 +67,16 @@ def test_runtime_reports_missing_or_invalid_configuration(config: RuntimeConfig)
     assert not runtime_status({"GBF_AUTO_CONFIG": str(config.path)})["available"]
 
 
+def test_runtime_discloses_optional_external_model(config: RuntimeConfig) -> None:
+    local = runtime_status({"GBF_AUTO_CONFIG": str(config.path)})
+    assert local["model_configured"] is False
+    assert "不发送素材" in local["message_zh"]
+    enabled = runtime_status({"GBF_AUTO_CONFIG": str(config.path), "GBF_DEEPSEEK_API_KEY": "test"})
+    assert enabled["model_configured"] is True
+    assert "发送至其服务" in enabled["message_zh"]
+    assert "不上传" not in enabled["message_zh"]
+
+
 def test_child_environment_drops_cross_interpreter_launcher() -> None:
     env = child_environment({"__PYVENV_LAUNCHER__": "other-python", "PYTHONHOME": "other-home"})
     assert "__PYVENV_LAUNCHER__" not in env
@@ -141,11 +151,26 @@ for name in ('detections.jsonl','calib.jsonl','plugin-receipt.json',
         return 0
 
     monkeypatch.setattr("gbf.pipeline.main", core)
+    narrated_calls = []
+
+    def compose(video, run_dir, output, **kwargs):
+        narrated_calls.append((video, run_dir, output, kwargs))
+        return {"status": "no_highlights"}
+
+    monkeypatch.setattr("gbf.narrated.create", compose)
     out = unicode_tmp_path / "runs" / "fresh"
     out.parent.mkdir()
     assert run(config, _video(unicode_tmp_path), out, {}) == 0
     assert any(arg.startswith("--sngs=") for arg in called)
     assert read_json(out / "automatic.json")["accuracy_evaluated"] is False
+    profile = read_json(out / "automatic.json")["profile"]
+    assert set(profile["stages"]) == {"prepare", "prediction", "analysis", "commentary"}
+    assert len(narrated_calls) == 1
+    assert narrated_calls[0][2] == out / "commentary"
+    assert all(row["status"] == "passed" for row in profile["stages"].values())
+    assert all(row["wall_s"] >= 0 for row in profile["stages"].values())
+    work = out.parent / ".gbf-web" / "work" / out.name
+    assert read_json(work / "execution-profile.json") == profile
     with pytest.raises(ValueError, match="已经存在"):
         run(config, unicode_tmp_path / "input.mp4", out, {})
 
@@ -161,6 +186,10 @@ def test_prediction_failure_never_runs_core(
     out.parent.mkdir()
     assert run(config, _video(unicode_tmp_path), out, {}) == 1
     assert not out.exists()
+    profile = read_json(out.parent / ".gbf-web" / "work" / out.name / "execution-profile.json")
+    assert profile["stages"]["prediction"]["status"] == "failed"
+    assert profile["stages"]["prediction"]["exit_code"] == 7
+    assert "analysis" not in profile["stages"]
 
 
 class LocalWeb:

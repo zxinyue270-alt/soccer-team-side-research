@@ -12,7 +12,13 @@ docs/design/m1-highlights.md, "plugin-sngs export rows"):
   ``C`` (3, metres), ``radial_distortion``, ``width``, ``height``, ``rep_err_px`` and
   ``rep_err_n_keypoints``.
 - ``plugin-receipt.json``: ``outputs`` (name, sha256, optional bytes and relpath),
-  ``restrictions`` and optional facts such as ``video_frames``.
+  ``restrictions`` and optional facts such as ``video_frames`` and, for an export with
+  embeddings, ``embeddings`` (``model``: the name of the re-identification model, and
+  ``rows`` and ``dim``, which are checked against the file).
+- ``embeddings.npz`` (optional, read only with ``embeddings=True``): the appearance embedding
+  of every detection, one row per line of detections.jsonl in the same order: ``frame``
+  (integers), ``track`` (integers, -1 unknown), ``box`` (n x 4, the line's box) and ``emb``
+  (n x D float32, as the plugin's re-identification model gave them; a NaN row = none).
 
 Every output listed in the receipt is re-hashed (raw bytes) before anything is accepted, and
 every row is validated; all problems are collected and raised together as
@@ -27,8 +33,16 @@ Outputs (``out_dir``):
 - ``tracks.parquet``: one row per detection, the contract columns of the design document
   (see :data:`TRACKS_SCHEMA`).
 - ``import.json``: input and output hashes, the receipt's restrictions, settings and counts.
+- ``embeddings.parquet`` (only with ``embeddings=True`` and an export whose receipt lists
+  ``embeddings.npz``): ``frame``, ``track_id`` and ``emb`` (a fixed-size list of float32), one
+  row per row of tracks.parquet in the same order, so row i describes row i of that table.
+  Every row of the npz file is checked against its detection line (frame, track id and box)
+  before anything is written. The file's schema metadata (key ``gbf.embeddings``) and
+  import.json (``embeddings``) name the model the receipt gives (null when it gives none)
+  and the dimension; :func:`embeddings_source` reads them back. The gbf.relink step of the
+  refine stage reads the file.
 
-Both parquet files carry the restrictions in their schema metadata (key
+The parquet files carry the restrictions in their schema metadata (key
 ``gbf.restrictions``, a JSON list), because every artifact carries the union of its inputs'
 restrictions (CONTRIBUTING.md).
 
@@ -58,8 +72,10 @@ with role "ball" are dropped (the ball comes from the external ball detector, no
 
 from __future__ import annotations
 
+import io
 import json
 import math
+import zipfile
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -89,6 +105,10 @@ RECEIPT_NAME = "plugin-receipt.json"
 TRACKS_NAME = "tracks.parquet"
 CALIB_NAME = "calib.parquet"
 IMPORT_JSON_NAME = "import.json"
+EMBEDDINGS_NPZ_NAME = "embeddings.npz"
+"""Optional file of the export: the appearance embedding of every detection line."""
+EMBEDDINGS_NAME = "embeddings.parquet"
+"""The embeddings aligned to tracks.parquet (written only when asked for and present)."""
 
 DEFAULT_REP_ERR_MAX_PX = 8.0
 """Largest ``rep_err_px`` of a pitch-usable frame, pixels: the empirical starting value of
@@ -116,6 +136,7 @@ MAX_LISTED_PROBLEMS = 200
 """SngsImportError messages list at most this many problems; ``problems`` keeps them all."""
 
 _RESTRICTIONS_KEY = b"gbf.restrictions"
+_EMBEDDINGS_KEY = b"gbf.embeddings"
 _PRODUCER_KEY = b"gbf.producer"
 _PRODUCER = "gbf.sngs_import"
 
@@ -198,6 +219,7 @@ class ImportSummary:
         n_pitch_usable_frames: frames whose calibration is pitch-usable.
         restrictions: restriction tags copied from the receipt, sorted.
         counts: the ``counts`` object of import.json.
+        embeddings_path: embeddings.parquet when it was written, else None.
     """
 
     out_dir: Path
@@ -211,6 +233,7 @@ class ImportSummary:
     n_pitch_usable_frames: int
     restrictions: tuple[str, ...]
     counts: Mapping[str, Any]
+    embeddings_path: Path | None = None
 
 
 # --- small value checks -----------------------------------------------------------------
@@ -445,6 +468,8 @@ class _Detections:
     jersey_conf: list[float | None]
     dropped_roles: Counter[str]
     team_null_strings: int
+    line: list[int]
+    """Line number (from 1) in detections.jsonl of every kept row."""
 
 
 _DETECTION_KEYS = ("frame", "track_id", "box", "conf", "role", "team", "jersey", "jersey_conf")
@@ -453,7 +478,7 @@ _DETECTION_KEYS = ("frame", "track_id", "box", "conf", "role", "team", "jersey",
 def _parse_detections(
     rows: list[tuple[int, Any]], n_frames: int | None, problems: list[str]
 ) -> _Detections:
-    out = _Detections([], [], [], [], [], [], [], [], Counter(), 0)
+    out = _Detections([], [], [], [], [], [], [], [], Counter(), 0, [])
     seen: dict[tuple[int, int], int] = {}
     for number, row in rows:
         where = f"{DETECTIONS_NAME} line {number}"
@@ -523,7 +548,147 @@ def _parse_detections(
         out.team.append(normalised_team)
         out.jersey.append(jersey)
         out.jersey_conf.append(None if jersey_conf is None else float(jersey_conf))
+        out.line.append(number)
     return out
+
+
+# --- embeddings ---------------------------------------------------------------------------
+
+
+def _milli(values: Any) -> np.ndarray:
+    """Pixels as whole thousandths, the precision the export writes boxes with."""
+    return np.rint(1000.0 * np.asarray(values, dtype=np.float64))
+
+
+def _parse_embeddings(
+    data: bytes, det_rows: list[tuple[int, Any]], problems: list[str]
+) -> np.ndarray | None:
+    """The ``emb`` array (n x D float32) of embeddings.npz after checking that row i
+    describes line i + 1 of detections.jsonl; None after recording every problem."""
+    name = EMBEDDINGS_NPZ_NAME
+    keys = ("frame", "track", "box", "emb")
+    arrays: dict[str, np.ndarray] = {}
+    try:
+        with np.load(io.BytesIO(data), allow_pickle=False) as archive:
+            missing = [key for key in keys if key not in archive.files]
+            if missing:
+                problems.append(f"{name}: missing array(s) {', '.join(missing)}")
+                return None
+            for key in keys:
+                arrays[key] = archive[key]
+    except (OSError, ValueError, EOFError, KeyError, zipfile.BadZipFile) as exc:
+        problems.append(f"{name}: cannot be read as an npz archive without pickle ({exc})")
+        return None
+    frame, track, box, emb = (arrays[key] for key in keys)
+    found = len(problems)
+    if emb.ndim != 2 or emb.dtype != np.float32 or emb.shape[1] < 1:
+        problems.append(
+            f"{name}: emb must be a float32 array (n, D) with D >= 1, got {emb.dtype} {emb.shape}"
+        )
+    for key, array in (("frame", frame), ("track", track)):
+        if array.ndim != 1 or not np.issubdtype(array.dtype, np.integer):
+            problems.append(
+                f"{name}: {key} must be a 1-D integer array, got {array.dtype} {array.shape}"
+            )
+    if box.ndim != 2 or box.shape[1:] != (4,) or not np.issubdtype(box.dtype, np.floating):
+        problems.append(f"{name}: box must be a float array (n, 4), got {box.dtype} {box.shape}")
+    if len(problems) > found:
+        return None
+    n_lines = len(det_rows)
+    if {len(frame), len(track), len(box), len(emb)} != {n_lines}:
+        problems.append(
+            f"{name}: frame, track, box and emb have {len(frame)}, {len(track)}, {len(box)} and "
+            f"{len(emb)} row(s) but {DETECTIONS_NAME} has {n_lines} line(s); the file must "
+            "hold one row per detection line, in the same order"
+        )
+        return None
+    box_milli = _milli(box)
+    for position, (number, row) in enumerate(det_rows):
+        if not isinstance(row, dict):
+            continue  # reported by the detection checks
+        line_frame, line_track, line_box = row.get("frame"), row.get("track_id"), row.get("box")
+        if not (
+            _is_int(line_frame)
+            and _is_int(line_track)
+            and isinstance(line_box, list)
+            and len(line_box) == 4
+            and all(_finite(v) for v in line_box)
+        ):
+            continue  # reported by the detection checks
+        if (
+            int(frame[position]) != line_frame
+            or int(track[position]) != line_track
+            or not np.array_equal(box_milli[position], _milli(line_box))
+        ):
+            problems.append(
+                f"{name} row {position}: frame {int(frame[position])}, track "
+                f"{int(track[position])}, box {box[position].tolist()} does not describe "
+                f"{DETECTIONS_NAME} line {number} (frame {line_frame}, track {line_track}, "
+                f"box {line_box})"
+            )
+    if len(problems) > found:
+        return None
+    return emb
+
+
+def _embedding_facts(
+    raw: Mapping[str, Any], emb: np.ndarray, problems: list[str]
+) -> dict[str, Any]:
+    """``{"model", "dim"}`` of the embeddings: the name the receipt's optional ``embeddings``
+    object gives the re-identification model (None when it gives none) and the dimension of
+    the array. What the object states is cross-checked: ``model`` must be a non-empty string,
+    ``rows`` and ``dim`` must be the array's."""
+    model: str | None = None
+    stated = raw.get("embeddings")
+    if stated is not None and not isinstance(stated, dict):
+        problems.append(f"{RECEIPT_NAME}: 'embeddings' must be an object")
+    elif stated is not None:
+        named = stated.get("model")
+        if named is None or (isinstance(named, str) and named.strip()):
+            model = named
+        else:
+            problems.append(f"{RECEIPT_NAME}: embeddings.model must be a non-empty string")
+        for key, actual in (("rows", int(emb.shape[0])), ("dim", int(emb.shape[1]))):
+            value = stated.get(key)
+            if value is not None and value != actual:
+                problems.append(
+                    f"{RECEIPT_NAME}: embeddings.{key} = {value!r} but {EMBEDDINGS_NPZ_NAME} "
+                    f"has {actual}"
+                )
+    return {"model": model, "dim": int(emb.shape[1])}
+
+
+def _embeddings_table(
+    emb: np.ndarray, detections: _Detections, metadata: Mapping[bytes, bytes]
+) -> tuple[pa.Table, int]:
+    """(embeddings.parquet as a table, rows without an embedding): the rows of the kept
+    detection lines in the order of tracks.parquet (the same sort as :func:`_tracks_columns`).
+    A row with a value that is not finite is stored as all NaN."""
+    frame = np.array(detections.frame, dtype=np.int64)
+    track_id = np.array(detections.track_id, dtype=np.int64)
+    order = np.lexsort((track_id, frame))
+    lines = np.array(detections.line, dtype=np.int64)[order]
+    rows = np.array(emb[lines - 1], dtype=np.float32)
+    empty = ~np.isfinite(rows).all(axis=1)
+    rows[empty] = np.nan
+    dim = int(rows.shape[1])
+    schema = pa.schema(
+        [
+            pa.field("frame", pa.int64(), nullable=False),
+            pa.field("track_id", pa.int64(), nullable=False),
+            pa.field("emb", pa.list_(pa.float32(), dim), nullable=False),
+        ]
+    )
+    values = pa.array(np.ascontiguousarray(rows).reshape(-1), type=pa.float32())
+    table = pa.Table.from_arrays(
+        [
+            pa.array(frame[order], type=pa.int64()),
+            pa.array(track_id[order], type=pa.int64()),
+            pa.FixedSizeListArray.from_arrays(values, dim),
+        ],
+        schema=schema.with_metadata(dict(metadata)),
+    )
+    return table, int(empty.sum())
 
 
 # --- calibration --------------------------------------------------------------------------
@@ -669,6 +834,7 @@ def import_sngs(
     *,
     rep_err_max_px: float = DEFAULT_REP_ERR_MAX_PX,
     overwrite: bool = False,
+    embeddings: bool = False,
 ) -> ImportSummary:
     """Validate the plugin-sngs export in ``sngs_dir`` and write the three outputs.
 
@@ -677,11 +843,19 @@ def import_sngs(
         out_dir: output directory (created if needed); must differ from ``sngs_dir``.
         rep_err_max_px: largest rep_err_px, in pixels, of a pitch-usable fresh frame.
         overwrite: replace existing outputs instead of refusing (FileExistsError).
+        embeddings: also import the export's ``embeddings.npz`` as embeddings.parquet, when
+            the receipt lists it (an export without it is not an error: no file is written
+            and ``embeddings_path`` is None). False reads no embedding at all. The import
+            does not look at the receipt's tags here: a caller that uses the embeddings
+            answers for theirs (gbf.pipeline adds RELINK_RESTRICTIONS to such a run).
 
     Raises:
         SngsImportError: listing every problem: missing files, sha256 or size mismatches
             against the receipt, unknown restriction tags, malformed rows (types, frame
-            range, statuses, matrix sizes, R not a rotation), duplicate rows.
+            range, statuses, matrix sizes, R not a rotation), duplicate rows; with
+            ``embeddings``, an embeddings.npz that is not readable, has other arrays or
+            another row count, a row that does not describe its detection line, or a
+            receipt whose ``embeddings`` object states another row count or dimension.
         FileExistsError: an output exists and ``overwrite`` is False.
         ValueError: invalid arguments.
 
@@ -695,12 +869,17 @@ def import_sngs(
         raise ValueError(f"rep_err_max_px must be a finite number > 0, got {rep_err_max_px!r}")
     if not isinstance(overwrite, bool):
         raise ValueError(f"overwrite must be a bool, got {overwrite!r}")
+    if not isinstance(embeddings, bool):
+        raise ValueError(f"embeddings must be a bool, got {embeddings!r}")
     if not source.is_dir():
         raise SngsImportError(str(source.name), ["sngs_dir is not a directory"])
     if target.exists() and target.resolve() == source.resolve():
         raise ValueError("out_dir must differ from sngs_dir (the plugin's outputs are read-only)")
     outputs = [target / TRACKS_NAME, target / CALIB_NAME, target / IMPORT_JSON_NAME]
+    embeddings_out = target / EMBEDDINGS_NAME
     existing = [path.name for path in outputs if path.exists()]
+    if embeddings and embeddings_out.exists():
+        existing.append(embeddings_out.name)
     if existing and not overwrite:
         raise FileExistsError(f"{target}: output(s) exist: {', '.join(existing)}")
 
@@ -711,14 +890,26 @@ def import_sngs(
     cal_path = _listed_path(receipt, source, CALIB_JSONL_NAME)
     det_bytes, det_rows = _read_jsonl(det_path, problems)
     cal_bytes, cal_rows = _read_jsonl(cal_path, problems)
+    emb_bytes: bytes | None = None
     if receipt is not None:
         parsed_bytes = {
             path: data
             for path, data in ((det_path, det_bytes), (cal_path, cal_bytes))
             if data is not None
         }
+        if embeddings:
+            # hashed from the bytes that are parsed below, like the two row files
+            for item in receipt.listed:
+                if item.path.name == EMBEDDINGS_NPZ_NAME and item.path.is_file():
+                    emb_bytes = item.path.read_bytes()
+                    parsed_bytes[item.path] = emb_bytes
+                    break  # the first entry of that name, as for the two row files
         _verify_outputs(receipt, parsed_bytes, problems)
     detections = _parse_detections(det_rows, n_frames_hint, problems)
+    emb_rows = None if emb_bytes is None else _parse_embeddings(emb_bytes, det_rows, problems)
+    emb_facts: dict[str, Any] = {}
+    if receipt is not None and emb_rows is not None:
+        emb_facts = _embedding_facts(receipt.raw, emb_rows, problems)
     calib: dict[int, _CalibRow] = {}
     for number, row in cal_rows:
         parsed = _parse_calib_row(number, row, n_frames_hint, problems)
@@ -766,6 +957,15 @@ def import_sngs(
     staged = {path: path.with_name(path.name + ".partial") for path in outputs}
     pq.write_table(calib_table, staged[target / CALIB_NAME])
     pq.write_table(tracks_table, staged[target / TRACKS_NAME])
+    embeddings_table = None
+    without_embedding = 0
+    if emb_rows is not None:
+        named = json.dumps(emb_facts, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        embeddings_table, without_embedding = _embeddings_table(
+            emb_rows, detections, {**metadata, _EMBEDDINGS_KEY: named}
+        )
+        staged[embeddings_out] = embeddings_out.with_name(embeddings_out.name + ".partial")
+        pq.write_table(embeddings_table, staged[embeddings_out])
 
     counts: dict[str, Any] = {
         "detection_rows": len(det_rows),
@@ -820,9 +1020,30 @@ def import_sngs(
             "position and speed errors are unmeasured",
         ],
     }
+    if embeddings_table is not None and emb_bytes is not None and emb_rows is not None:
+        counts["embedding_rows"] = embeddings_table.num_rows
+        counts["embedding_dim"] = int(emb_rows.shape[1])
+        counts["track_rows_without_embedding"] = without_embedding
+        record["embeddings"] = dict(emb_facts)
+        record["inputs"].append(
+            {
+                "name": EMBEDDINGS_NPZ_NAME,
+                "sha256": sha256_bytes(emb_bytes),
+                "bytes": len(emb_bytes),
+            }
+        )
+        record["outputs"].append(
+            {
+                "name": EMBEDDINGS_NAME,
+                "sha256": sha256_file(staged[embeddings_out]),
+                "bytes": staged[embeddings_out].stat().st_size,
+            }
+        )
     write_json(staged[target / IMPORT_JSON_NAME], record)
     for final, temporary in staged.items():
         temporary.replace(final)
+    if embeddings_table is None and overwrite and embeddings_out.exists():
+        embeddings_out.unlink()  # a file of an earlier import must not outlive this one
     return ImportSummary(
         out_dir=target,
         tracks_path=target / TRACKS_NAME,
@@ -835,6 +1056,7 @@ def import_sngs(
         n_pitch_usable_frames=int(sum(usable.values())),
         restrictions=receipt.restrictions,
         counts=counts,
+        embeddings_path=None if embeddings_table is None else embeddings_out,
     )
 
 
@@ -1045,6 +1267,96 @@ def load_calib(path: str | Path) -> pd.DataFrame:
     holds the stored restriction tags. Raises SngsImportError listing every schema problem.
     """
     return _read_checked(path, CALIB_NAME, CALIB_SCHEMA)
+
+
+def load_embeddings(path: str | Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Read embeddings.parquet (a file, or the directory holding it).
+
+    Returns ``(frame, track_id, emb)``: int64 (n,), int64 (n,) and float32 (n, D), row i for
+    row i of the import's tracks.parquet; ``track_id`` is the plugin's id (-1 unknown) and a
+    NaN row of ``emb`` means the detection has no embedding. Raises SngsImportError listing
+    every schema problem.
+    """
+    source = Path(path)
+    if source.is_dir():
+        source = source / EMBEDDINGS_NAME
+    try:
+        table = pq.read_table(source)
+    except (OSError, pa.ArrowException) as exc:
+        raise SngsImportError(source.name, [f"cannot read as parquet: {exc}"]) from exc
+    problems = []
+    for name in ("frame", "track_id"):
+        if name not in table.schema.names:
+            problems.append(f"missing column {name}")
+        elif not table.schema.field(name).type.equals(pa.int64()):
+            problems.append(f"column {name}: type {table.schema.field(name).type}, expected int64")
+        elif table.column(name).null_count:
+            problems.append(f"column {name}: {table.column(name).null_count} null(s)")
+    dim = 0
+    if "emb" not in table.schema.names:
+        problems.append("missing column emb")
+    else:
+        kind = table.schema.field("emb").type
+        if not (pa.types.is_fixed_size_list(kind) and kind.value_type.equals(pa.float32())):
+            problems.append(f"column emb: type {kind}, expected a fixed-size list of float32")
+        elif table.column("emb").null_count:
+            problems.append(f"column emb: {table.column('emb').null_count} null(s)")
+        else:
+            dim = int(kind.list_size)
+    if problems:
+        raise SngsImportError(source.name, problems)
+    emb = np.zeros((table.num_rows, dim), dtype=np.float32)
+    start = 0
+    for chunk in table.column("emb").chunks:
+        values = chunk.flatten().to_numpy(zero_copy_only=False)
+        emb[start : start + len(chunk)] = values.reshape(len(chunk), dim)
+        start += len(chunk)
+    frame = table.column("frame").to_numpy().astype(np.int64, copy=False)
+    track_id = table.column("track_id").to_numpy().astype(np.int64, copy=False)
+    return frame, track_id, emb
+
+
+def embeddings_source(path: str | Path) -> dict[str, Any]:
+    """What embeddings.parquet (a file, or the directory holding it) says about its vectors:
+    ``{"model", "dim"}``. ``model`` is the name the plugin receipt gave the re-identification
+    model, None when it gave none or the file does not say; ``dim`` is the length of the
+    stored vectors. Raises SngsImportError when the file is not an embeddings table."""
+    source = Path(path)
+    if source.is_dir():
+        source = source / EMBEDDINGS_NAME
+    try:
+        schema = pq.read_schema(source)
+    except (OSError, pa.ArrowException) as exc:
+        raise SngsImportError(source.name, [f"cannot read as parquet: {exc}"]) from exc
+    kind = schema.field("emb").type if "emb" in schema.names else None
+    if kind is None or not pa.types.is_fixed_size_list(kind):
+        raise SngsImportError(source.name, ["column emb is not a fixed-size list"])
+    model: str | None = None
+    stored = (schema.metadata or {}).get(_EMBEDDINGS_KEY)
+    if stored is not None:
+        try:
+            stated = json.loads(stored.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            stated = None
+        if isinstance(stated, dict) and isinstance(stated.get("model"), str):
+            model = stated["model"]
+    return {"model": model, "dim": int(kind.list_size)}
+
+
+def lists_embeddings(sngs_dir: str | Path) -> bool:
+    """Whether the export's receipt lists an ``embeddings.npz`` among its outputs: the file
+    :func:`import_sngs` reads with ``embeddings=True``. False when the receipt is missing or
+    cannot be read (the import reports that)."""
+    try:
+        raw = json.loads((Path(sngs_dir) / RECEIPT_NAME).read_bytes().decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    outputs = raw.get("outputs") if isinstance(raw, dict) else None
+    for entry in outputs if isinstance(outputs, list) else []:
+        relpath = entry.get("relpath", entry.get("name")) if isinstance(entry, dict) else None
+        if isinstance(relpath, str) and PurePosixPath(relpath).name == EMBEDDINGS_NPZ_NAME:
+            return True
+    return False
 
 
 def _camera_from_row(row: Mapping[str, Any]) -> Camera | None:

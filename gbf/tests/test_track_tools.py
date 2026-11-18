@@ -30,6 +30,100 @@ def test_ids_reused_after_a_cut_get_new_ids() -> None:
     ]
 
 
+SIZE = (1280, 720)
+LONG_SHOT = pd.DataFrame({"shot_id": [0, 1], "start_frame": [0, 100], "end_frame": [99, 199]})
+MIDDLE = (600.0, 300.0, 630.0, 380.0)
+AT_RIGHT_EDGE = (1250.0, 300.0, 1279.0, 380.0)
+
+
+def _boxes(spec: list[tuple[int, int, tuple[float, float, float, float]]]) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "frame": [f for f, _, _ in spec],
+            "track_id": [t for _, t, _ in spec],
+            **{name: [b[k] for _, _, b in spec] for k, name in enumerate(("x1", "y1", "x2", "y2"))},
+        }
+    )
+
+
+def test_a_player_who_leaves_the_picture_and_comes_back_gets_a_new_id() -> None:
+    # Track 7 runs out at the right edge on frame 4 and an id-7 box is back on frame 15:
+    # 10 frames (0.4 s at 25 fps) without it. Whoever comes back, the id rests on appearance.
+    tracks = _boxes(
+        [
+            (3, 7, MIDDLE),
+            (4, 7, AT_RIGHT_EDGE),
+            (15, 7, MIDDLE),
+            (16, 7, MIDDLE),
+            (16, 8, MIDDLE),
+            (17, -1, AT_RIGHT_EDGE),
+        ]
+    )
+    out, mapping = tt.split_tracks(tracks, LONG_SHOT, frame_size=SIZE, fps=25.0)
+    assert out["track_id"].tolist() == [7, 7, 100_007, 100_007, 8, -1]
+    assert out["source_track_id"].tolist() == tracks["track_id"].tolist()
+    assert mapping.to_dict("records") == [
+        {"source_track_id": 7, "shot_id": 0, "start_frame": 3, "end_frame": 4,
+         "track_id": 7, "reason": "first", "gap_frames": 0},
+        {"source_track_id": 7, "shot_id": 0, "start_frame": 15, "end_frame": 16,
+         "track_id": 100_007, "reason": "reentry", "gap_frames": 10},
+        {"source_track_id": 8, "shot_id": 0, "start_frame": 16, "end_frame": 16,
+         "track_id": 8, "reason": "first", "gap_frames": 0},
+    ]  # fmt: skip
+
+
+def test_a_box_entering_at_the_edge_after_the_gap_is_a_reentry_too() -> None:
+    # The camera panned away from the player and back: lost in the middle, back at the edge.
+    tracks = _boxes([(3, 7, MIDDLE), (20, 7, AT_RIGHT_EDGE), (21, 7, MIDDLE)])
+    out, _ = tt.split_tracks(tracks, LONG_SHOT, frame_size=SIZE, fps=25.0)
+    assert out["track_id"].tolist() == [7, 100_007, 100_007]
+
+
+def test_a_gap_away_from_the_edges_or_a_short_one_keeps_the_id() -> None:
+    hidden = _boxes([(3, 7, MIDDLE), (40, 7, MIDDLE)])  # behind another player, not out
+    flicker = _boxes([(3, 7, AT_RIGHT_EDGE), (13, 7, AT_RIGHT_EDGE)])  # 9 frames missing
+    for tracks in (hidden, flicker):
+        out, mapping = tt.split_tracks(tracks, LONG_SHOT, frame_size=SIZE, fps=25.0)
+        assert out["track_id"].tolist() == [7, 7]
+        assert mapping["reason"].tolist() == ["first"]
+
+
+def test_reentry_and_cut_pieces_are_numbered_together_in_frame_order() -> None:
+    tracks = _boxes([(4, 7, AT_RIGHT_EDGE), (30, 7, MIDDLE), (120, 7, MIDDLE), (121, 7, MIDDLE)])
+    out, mapping = tt.split_tracks(tracks, LONG_SHOT, frame_size=SIZE, fps=25.0)
+    assert out["track_id"].tolist() == [7, 100_007, 200_007, 200_007]
+    assert mapping["reason"].tolist() == ["first", "reentry", "cut"]
+    # Without the frame size only the cut splits, as split_tracks_at_cuts does.
+    cut_only, _ = tt.split_tracks(tracks, LONG_SHOT)
+    assert cut_only["track_id"].tolist() == [7, 7, 100_007, 100_007]
+    assert (
+        cut_only["track_id"].tolist()
+        == tt.split_tracks_at_cuts(tracks, LONG_SHOT)[0]["track_id"].tolist()
+    )
+
+
+def test_the_gap_scales_with_the_frame_rate() -> None:
+    tracks = _boxes([(4, 7, AT_RIGHT_EDGE), (15, 7, MIDDLE)])  # 10 frames missing
+    at_25, _ = tt.split_tracks(tracks, LONG_SHOT, frame_size=SIZE, fps=25.0)
+    at_50, _ = tt.split_tracks(tracks, LONG_SHOT, frame_size=SIZE, fps=50.0)  # 0.2 s only
+    assert (at_25["track_id"].tolist(), at_50["track_id"].tolist()) == ([7, 100_007], [7, 7])
+
+
+def test_reentry_needs_the_frame_rate_and_the_boxes() -> None:
+    with pytest.raises(tt.TrackToolsError, match="fps"):
+        tt.split_tracks(_boxes([(4, 7, MIDDLE)]), LONG_SHOT, frame_size=SIZE)
+    with pytest.raises(tt.TrackToolsError, match="x1"):
+        tt.split_tracks(_rows([(4, 7)]), LONG_SHOT, frame_size=SIZE, fps=25.0)
+
+
+def test_vector_and_single_edge_tests_agree() -> None:
+    boxes = [MIDDLE, AT_RIGHT_EDGE, (0.0, 10.0, 30.0, 90.0), (600.0, 640.0, 630.0, 719.0)]
+    boxes.append((math.nan, 0.0, 1.0, 1.0))
+    vector = tt.boxes_touch_edge(boxes, SIZE).tolist()
+    assert vector == [tt.box_touches_edge(b, SIZE) for b in boxes]
+    assert vector == [False, True, True, True, False]
+
+
 def test_rows_outside_every_shot_are_refused() -> None:
     with pytest.raises(tt.TrackToolsError, match="outside every shot"):
         tt.split_tracks_at_cuts(_rows([(40, 1)]), SHOTS)

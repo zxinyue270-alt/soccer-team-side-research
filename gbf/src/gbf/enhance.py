@@ -1,8 +1,8 @@
 """Pipeline steps that sit between the M1 modules (one call each, so the pipeline stays
 readable):
 
-- :func:`clean_tracks` -- split track ids at cuts, keep only confident jersey numbers
-  (gbf.track_tools).
+- :func:`clean_tracks` -- split track ids at cuts and where a player left the picture and
+  came back, keep only confident jersey numbers (gbf.track_tools).
 - :func:`refine_from_plugin` -- if the plugin exported pitch keypoints
   (``keypoints.jsonl`` listed with its sha256 in ``keypoints-receipt.json``), refit the
   calibration with a fixed camera centre per camera (gbf.calib_refine) and recompute the
@@ -31,14 +31,34 @@ class EnhanceError(ValueError):
         super().__init__(f"{where}: " + "; ".join(self.problems))
 
 
-def clean_tracks(tracks: pd.DataFrame, shots: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
-    """Split ids at cuts and drop unconfident jersey numbers; returns (tracks, counts)."""
-    split, mapping = track_tools.split_tracks_at_cuts(tracks, shots)
+def clean_tracks(
+    tracks: pd.DataFrame,
+    shots: pd.DataFrame,
+    *,
+    frame_size: tuple[float, float] | None = None,
+    fps: float | None = None,
+) -> tuple[pd.DataFrame, dict]:
+    """Split ids at cuts and, with ``frame_size`` and ``fps``, where a player left the picture
+    and came back (gbf.track_tools.split_tracks), then drop unconfident jersey numbers;
+    returns (tracks, counts)."""
+    split, mapping = track_tools.split_tracks(tracks, shots, frame_size=frame_size, fps=fps)
     cleaned = track_tools.confident_jerseys(split)
+    reentries = mapping[mapping["reason"] == "reentry"]
     counts = {
         "track_ids_before": int(tracks.loc[tracks["track_id"] >= 0, "track_id"].nunique()),
         "track_ids_after": int(cleaned.loc[cleaned["track_id"] >= 0, "track_id"].nunique()),
         "pieces_renamed": int((mapping["track_id"] != mapping["source_track_id"]).sum()),
+        "pieces_split_at_cuts": int((mapping["reason"] == "cut").sum()),
+        "pieces_split_at_reentry": len(reentries),
+        "reentry_pieces": [
+            {
+                "track_id": int(row.track_id),
+                "source_track_id": int(row.source_track_id),
+                "start_frame": int(row.start_frame),
+                "gap_frames": int(row.gap_frames),
+            }
+            for row in reentries.itertuples(index=False)
+        ],
         "rows_with_jersey_before": int(tracks["jersey"].notna().sum()) if "jersey" in tracks else 0,
         "rows_with_jersey_after": int(cleaned["jersey"].notna().sum()),
     }

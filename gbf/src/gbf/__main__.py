@@ -26,6 +26,10 @@ COMMANDS: dict[str, tuple[str, str]] = {
         "gbf.evaluate.gsr_dev",
         "Deviation of runs on the gates.v1 GSR dev clips from their annotations.",
     ),
+    "eval-product": (
+        "gbf.evaluate.product",
+        "Offline highlight acceptance and coverage; no inference or downloads.",
+    ),
 }
 
 

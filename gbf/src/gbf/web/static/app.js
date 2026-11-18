@@ -657,6 +657,27 @@
         )
       );
     }
+    if (detail.narrated) {
+      const movie = detail.narrated;
+      const panel = el("section", { class: "panel", id: "narrated-result" },
+        el("h2", null, "精彩解说视频"));
+      if (movie.review_zh) panel.append(el("p", { class: "alert alert-bad" }, movie.review_zh));
+      if (movie.status === "ready" && movie.video) {
+        panel.append(
+          el("div", { class: "media-single" },
+            el("video", { src: fileUrl(run, movie.video), controls: true, preload: "metadata", "aria-label": "精彩解说成片" })),
+          el("div", { class: "actions" },
+            el("a", { class: "btn btn-primary", href: fileUrl(run, movie.video), download: "精彩解说.mp4" }, "下载解说视频"),
+            movie.subtitles ? el("a", { class: "btn", href: fileUrl(run, movie.subtitles), download: "解说字幕.srt" }, "下载字幕") : null),
+          el("p", { class: "muted small" },
+            (movie.sources || []).includes("local_replay_guidance")
+              ? "包含保守回放引导；精彩筛选与动作解释仍需核对。"
+              : "AI解说：动作与战术解释尚未独立核验。"));
+      } else {
+        panel.append(el("p", { class: movie.status === "failed" ? "alert alert-bad" : "muted" }, movie.message_zh));
+      }
+      parts.push(panel);
+    }
     parts.push(factsGrid(detail));
     parts.push(
       el(
@@ -805,7 +826,7 @@
     const value = (name) => (last && last[name]) || "";
     const teams = (last && last.team_names) || {};
     const status = el("div", { "aria-live": "polite" });
-    const submit = el("button", { type: "submit", class: "btn btn-primary" }, "开始自动分析");
+    const submit = el("button", { type: "submit", class: "btn btn-primary" }, "生成精彩解说视频");
     const manual = el("input", { id: "f-manual", type: "checkbox" });
     const picker = el("input", { id: "video-picker", type: "file", accept: "video/*,.mkv,.m4v,.avi" });
     const selection = el("p", { class: "muted small", "aria-live": "polite" }, "尚未选择视频");
@@ -825,7 +846,7 @@
     const syncMode = () => {
       imported.hidden = !manual.checked;
       picker.disabled = manual.checked;
-      submit.textContent = manual.checked ? "分析已有预测" : "开始自动分析";
+      submit.textContent = manual.checked ? "分析已有预测" : "生成精彩解说视频";
       submit.disabled = Boolean(data.current) || (!manual.checked && !automatic.available);
     };
     manual.addEventListener("change", syncMode);
@@ -835,7 +856,7 @@
         el("div", { class: "hint" }, "文件仅传到这台电脑。支持 60 秒以内、512 MB 以内的短片。")),
       el("details", null, el("summary", null, "或填写本地视频完整路径"),
         field("video", "视频路径", false, "已选择文件时优先使用所选文件；手动导入模式请填写路径。", "")),
-      el("p", { class: "workflow-note" }, "准备视频 → 识别球员与足球 → 筛选高光 → 分析动作 → 生成报告"),
+      el("p", { class: "workflow-note" }, "准备视频 → 识别球员与足球 → 筛选高光 → 配音字幕 → 导出视频"),
       el("div", { class: "alert " + (automatic.available ? "alert-warn" : "alert-bad") },
         automatic.message_zh, el("p", { class: "small" }, "处理时请保持本机服务运行；可关闭页面后用原地址回来查看。运行成功不代表测量准确，3D 只作参考。")),
       el("details", { class: "advanced" }, el("summary", null, "高级选项"),
@@ -985,6 +1006,7 @@
         stages,
         job.stages.map((stage) => {
           let [mark, text] = STAGE_STATE[stage.state] || ["", stage.state];
+          if (stage.name === "commentary" && stage.state === "skipped") text = "无精彩候选，跳过成片";
           if (stage.state === "pending" && job.status !== "running") text = "未运行";
           return el(
             "li",

@@ -83,6 +83,7 @@ SERVED_SUFFIXES: Mapping[str, str] = MappingProxyType(
         ".png": "image/png",
         ".jpg": "image/jpeg",
         ".mp4": "video/mp4",
+        ".srt": "text/plain; charset=utf-8",
         ".json": "application/json; charset=utf-8",
         # JSON lines has no registered type; as plain text the browser shows it instead of
         # saving a copy of the run's data into the downloads folder.
@@ -790,6 +791,16 @@ def run_detail(root: Path, name: str) -> dict[str, Any]:
         if _media(base, "automatic.json")
         else {}
     )
+    narrated = (
+        _mapping(load_document(base, "commentary/manifest.json", problems))
+        if _media(base, "commentary/manifest.json")
+        else {}
+    )
+    narration_review = (
+        _mapping(load_document(base, "commentary/semantic-review.json", problems))
+        if _media(base, "commentary/semantic-review.json")
+        else {}
+    )
     return {
         "name": name,
         "run": {
@@ -833,6 +844,20 @@ def run_detail(root: Path, name: str) -> dict[str, Any]:
         if timeline
         else None,
         "full_clip": {"path": full, "mapping": mapping} if full else None,
+        "narrated": {
+            "status": _text(narrated.get("status")),
+            "message_zh": _text(narrated.get("message_zh")),
+            "video": _media(base, "commentary/highlights.mp4")
+            if narrated.get("status") == "ready"
+            else None,
+            "subtitles": _media(base, "commentary/subtitles.srt")
+            if narrated.get("status") == "ready"
+            else None,
+            "sources": narrated.get("explanation_sources", []),
+            "review_zh": _text(narration_review.get("message_zh")),
+        }
+        if narrated
+        else None,
         "highlights": cards,
         "labels": label_comparison(label_eval, names) if label_eval is not None else None,
         "highlights_final": final,

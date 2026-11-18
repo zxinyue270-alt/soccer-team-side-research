@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -101,7 +102,14 @@ def runtime_status(environ: Mapping[str, str]) -> dict[str, Any]:
         "available": True,
         "max_duration_s": config.max_duration_s,
         "max_upload_bytes": MAX_UPLOAD_BYTES,
-        "message_zh": "本机 CPU 短片模式：30 秒视频可能需要数小时；不上传至外部服务。",
+        "model_configured": bool(environ.get("GBF_DEEPSEEK_API_KEY")),
+        "message_zh": "本机 CPU 短片模式：30 秒视频可能需要数小时。"
+        + (
+            "已配置 DeepSeek：选中片段的抽样全景、局部图和位置证据会发送至其服务，"
+            "生成待核对的 AI 解说；配音在本机合成。"
+            if environ.get("GBF_DEEPSEEK_API_KEY")
+            else "当前使用本机配音和回放引导，不发送素材至外部服务。"
+        ),
     }
 
 
@@ -235,14 +243,32 @@ def run(config: RuntimeConfig, source: Path, out: Path, options: dict[str, Any])
     work = out.parent / ".gbf-web" / "work" / out.name
     work.mkdir(parents=True, exist_ok=False)
     started = time.monotonic()
-    record = prepare_video(source, work, config.max_duration_s)
+    profile: dict[str, Any] = {"schema": "gbf.execution-profile/1", "stages": {}}
+
+    @contextmanager
+    def timed(name):
+        begin = time.monotonic()
+        row = {"status": "failed"}
+        profile["stages"][name] = row
+        try:
+            yield
+            row["status"] = "failed" if row.get("exit_code", 0) else "passed"
+        finally:
+            row["wall_s"] = round(time.monotonic() - begin, 6)
+            profile["wall_s"] = round(time.monotonic() - started, 6)
+            write_json(work / "execution-profile.json", profile)
+
+    with timed("prepare"):
+        record = prepare_video(source, work, config.max_duration_s)
     plugin = work / "predictions"
     command = [*config.command, "--input", str(work / "input.json"), "--output", str(plugin)]
     write_json(
         work / "prediction-command.json",
         {"argv": command, "config_sha256": sha256_file(config.path)},
     )
-    code = subprocess.call(command, env=clean_environment(), stdin=subprocess.DEVNULL)
+    with timed("prediction"):
+        code = subprocess.call(command, env=clean_environment(), stdin=subprocess.DEVNULL)
+        profile["stages"]["prediction"]["exit_code"] = code
     if code:
         print(f"highlights: failed: 自动识别失败（退出码 {code}），详情见上面的日志。", flush=True)
         return 1
@@ -272,7 +298,21 @@ def run(config: RuntimeConfig, source: Path, out: Path, options: dict[str, Any])
     teams = options.get("team_names")
     if teams:
         args.append("--team-names=" + ",".join(f"{side}={name}" for side, name in teams.items()))
-    code = highlights_main(args)
+    with timed("analysis"):
+        code = highlights_main(args)
+        profile["stages"]["analysis"]["exit_code"] = code
+    if code == 0:
+        from gbf.narrated import create
+
+        try:
+            with timed("commentary"):
+                create(Path(record["video"]), out, out / "commentary", audio_source=source)
+        except Exception as exc:
+            code = 1
+            print(
+                f"highlights: failed: 解说成片失败（{type(exc).__name__}），已有分析结果保留。",
+                flush=True,
+            )
     if out.is_dir():
         write_json(
             out / "automatic.json",
@@ -284,6 +324,7 @@ def run(config: RuntimeConfig, source: Path, out: Path, options: dict[str, Any])
                 "frame_verification": frame_check,
                 "config_sha256": sha256_file(config.path),
                 "wall_s": time.monotonic() - started,
+                "profile": profile,
                 "exit_code": code,
                 "accuracy_evaluated": False,
             },

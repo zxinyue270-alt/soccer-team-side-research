@@ -84,6 +84,8 @@ STAGE_NAMES_ZH: Mapping[str, str] = MappingProxyType(
 )
 """Chinese names of the gbf.pipeline stages, for the progress view."""
 
+POST_STAGES = {"commentary": "生成配音字幕与精彩成片"}
+
 FIELD_NAMES_ZH: Mapping[str, str] = MappingProxyType(
     {
         "video": "视频文件",
@@ -583,7 +585,9 @@ class Job:
 
     @property
     def stage_names(self) -> tuple[str, ...]:
-        return (*AUTO_STAGES, *STAGES) if self.request.mode == "auto" else tuple(STAGES)
+        return (
+            (*AUTO_STAGES, *STAGES, "commentary") if self.request.mode == "auto" else tuple(STAGES)
+        )
 
     # ---------------------------------------------------------------- the log
 
@@ -631,7 +635,9 @@ class Job:
             states.append(
                 {
                     "name": name,
-                    "name_zh": AUTO_STAGES.get(name, STAGE_NAMES_ZH.get(name, name)),
+                    "name_zh": AUTO_STAGES.get(
+                        name, POST_STAGES.get(name, STAGE_NAMES_ZH.get(name, name))
+                    ),
                     "state": state or "pending",
                 }
             )
@@ -641,7 +647,10 @@ class Job:
         problems = [translate_problem(p) for p in self._problems]
         if not problems and self._failure and not _PROBLEM_HEADER.match(self._failure):
             problems = [translate_problem(self._failure)]
-        stage_zh = AUTO_STAGES.get(current or "", STAGE_NAMES_ZH.get(current or "", current or ""))
+        stage_zh = AUTO_STAGES.get(
+            current or "",
+            POST_STAGES.get(current or "", STAGE_NAMES_ZH.get(current or "", current or "")),
+        )
         if status == "running":
             return (f"正在分析：{stage_zh}……" if current else "正在启动分析……"), []
         if status == "succeeded":

@@ -81,7 +81,10 @@ Cues (float64 in [0, 1]; 0 when their evidence is missing)
         player or goalkeeper nearest the ball decides the side in possession; the ball's
         distance to the goal that side attacks maps linearly from 25 m (0) to 11 m, the
         penalty spot (1).
-    ``duel``  the nearest pair of opposing players, both near the ball. On pitch frames with
+    ``duel``  the nearest pair of opposing players, both near the ball. A pair needs shared
+        ball reach (both within 1.5 m, or 0.75 own box heights in the image) within 0.5 s,
+        in the same shot and coordinate unit. Proximity alone while chasing is insufficient.
+        On pitch frames with
         the ball's ground position: both within :data:`DUEL_BALL_RADIUS_M` of the ball, pair
         distance in metres mapped from 4 m (0) to 1 m (1). Elsewhere, in the image: foot
         points within :data:`DUEL_BALL_RADIUS_H` own box heights of the ball, pair distance in
@@ -234,6 +237,13 @@ DUEL_FAR_M = 4.0
 DUEL_BALL_RADIUS_H = 2.0
 DUEL_NEAR_H = 0.5
 DUEL_FAR_H = 2.0
+#: Both players must come within roughly one stride of the ball to corroborate a contest.
+#: These are conservative starting assumptions, not validated action-classification bounds.
+DUEL_BALL_REACH_M = 1.5
+DUEL_BALL_REACH_H = 0.75
+#: Retain the broad proximity cue briefly around shared reach: dribbling pushes the ball
+#: away between touches. Evidence may not propagate across a cut, pair or coordinate unit.
+DUEL_BALL_CONTEXT_S = 0.5
 #: No image-plane duel in a shot whose median person box (shots.median_box_h, 1080-line
 #: pixels) is taller than half the frame: such close-ups show upper bodies, whose box
 #: bottoms are the frame edge rather than feet.
@@ -872,9 +882,14 @@ def _at_box(ball_box_m: np.ndarray) -> np.ndarray:
 
 
 def _duel(
-    players: _Players, side: _BallSide, image_ok: np.ndarray, n: int
+    players: _Players,
+    side: _BallSide,
+    image_ok: np.ndarray,
+    shot_index: np.ndarray,
+    context_frames: int,
+    n: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Nearest opposing pair near the ball; ``image_ok[f]`` allows the image plane on f."""
+    """Nearest opposing pair with recent shared ball reach; image_ok allows image distance."""
     f = players.frame
     metric = side.metric[f]
     radius = np.where(metric, DUEL_BALL_RADIUS_M, DUEL_BALL_RADIUS_H)
@@ -885,6 +900,8 @@ def _duel(
             "track_id": players.track_id[near],
             "team": players.team[near],
             "metric": metric[near],
+            "shot_id": shot_index[f[near]],
+            "ball_dist": side.dist[near],
             "x": players.x[near],
             "y": players.y[near],
             "u": players.u[near],
@@ -900,6 +917,26 @@ def _duel(
     unit = np.full(n, None, dtype=object)
     id_a = np.full(n, -1, dtype=np.int64)
     id_b = np.full(n, -1, dtype=np.int64)
+    if pairs.empty:
+        return cue, dist_out, unit, id_a, id_b
+    # Four metres is a search neighbourhood, not evidence that both players can contest
+    # the ball. Confirm each candidate pair before choosing the nearest one, so a closer
+    # unconfirmed pair cannot hide a different pair actually reaching the ball.
+    frames = pairs["frame"].to_numpy(dtype=np.int64)
+    reach = np.where(pairs["metric_a"], DUEL_BALL_REACH_M, DUEL_BALL_REACH_H)
+    shared = (pairs["ball_dist_a"].to_numpy() <= reach) & (pairs["ball_dist_b"].to_numpy() <= reach)
+    supported = np.zeros(len(pairs), dtype=bool)
+    keys = ["shot_id_a", "track_id_a", "track_id_b", "metric_a"]
+    for rows in pairs.groupby(keys, sort=False).indices.values():
+        observed = np.unique(frames[rows][shared[rows]])
+        if not observed.size:
+            continue
+        at = np.searchsorted(observed, frames[rows])
+        before = observed[np.clip(at - 1, 0, len(observed) - 1)]
+        after = observed[np.clip(at, 0, len(observed) - 1)]
+        gap = np.minimum(np.abs(frames[rows] - before), np.abs(frames[rows] - after))
+        supported[rows] = gap <= context_frames
+    pairs = pairs.loc[supported]
     if pairs.empty:
         return cue, dist_out, unit, id_a, id_b
     is_metric = pairs["metric_a"].to_numpy(dtype=bool)
@@ -1148,7 +1185,14 @@ def _signals(
         side = replace(side, cue=np.zeros(n), goal_m=np.full(n, np.nan))
     # Unknown box heights (NaN) do not block the image plane.
     image_shot = ~(shots.median_box_h > DUEL_IMAGE_MAX_BOX_H_PX)
-    duel_cue, duel_dist, duel_unit, duel_a, duel_b = _duel(players, side, image_shot[shot_index], n)
+    duel_cue, duel_dist, duel_unit, duel_a, duel_b = _duel(
+        players,
+        side,
+        image_shot[shot_index],
+        shot_index,
+        _round_frames(DUEL_BALL_CONTEXT_S, rate),
+        n,
+    )
     strike_cue, strike_frame = _strike(events, rate, n)
 
     cues = {
